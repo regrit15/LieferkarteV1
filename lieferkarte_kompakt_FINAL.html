@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Liefergebiet - Landhandel Schuirmann</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; }
+        .delivery-widget { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+        .widget-header { background: #2c5530; color: white; padding: 15px 20px; }
+        .widget-header h3 { font-size: 18px; margin-bottom: 4px; }
+        .widget-header p { font-size: 13px; opacity: 0.9; }
+        #compactMap { height: 400px; width: 100%; }
+        .legend-compact { position: absolute; top: 10px; right: 10px; background: white; padding: 10px; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); z-index: 1000; max-width: 140px; }
+        .legend-compact-title { font-weight: bold; margin-bottom: 8px; color: #2c5530; font-size: 12px; }
+        .legend-compact-item { display: flex; align-items: center; margin-bottom: 6px; font-size: 11px; }
+        .legend-compact-color { width: 20px; height: 15px; border-radius: 3px; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1); }
+        .widget-footer { padding: 15px 20px; background: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center; }
+        .widget-footer p { font-size: 13px; color: #666; margin-bottom: 10px; }
+        .call-button { display: inline-block; background: #2c5530; color: white; padding: 10px 24px; border-radius: 6px; font-size: 16px; font-weight: bold; text-decoration: none; transition: background 0.2s; }
+        .call-button:hover { background: #1e3a20; }
+        @media (max-width: 768px) {
+            #compactMap { height: 300px; }
+            .legend-compact { max-width: 120px; padding: 8px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="delivery-widget">
+        <div class="widget-header">
+            <h3>🚚 Unser Liefergebiet</h3>
+            <p>Lieferkosten je nach Entfernung</p>
+        </div>
+        
+        <div style="position: relative;">
+            <div id="compactMap"></div>
+            <div class="legend-compact">
+                <div class="legend-compact-title">Lieferkosten</div>
+                <div class="legend-compact-item"><div class="legend-compact-color" style="background: #10b981;"></div><div>20 €</div></div>
+                <div class="legend-compact-item"><div class="legend-compact-color" style="background: #34d399;"></div><div>25 €</div></div>
+                <div class="legend-compact-item"><div class="legend-compact-color" style="background: #6ee7b7;"></div><div>30 €</div></div>
+                <div class="legend-compact-item"><div class="legend-compact-color" style="background: #fbbf24;"></div><div>40 €</div></div>
+                <div class="legend-compact-item"><div class="legend-compact-color" style="background: #f59e0b;"></div><div>45 €</div></div>
+                <div class="legend-compact-item"><div class="legend-compact-color" style="background: #f97316;"></div><div>50 €</div></div>
+                <div class="legend-compact-item"><div class="legend-compact-color" style="background: #ef4444;"></div><div>60 €</div></div>
+                <div class="legend-compact-item"><div class="legend-compact-color" style="background: #dc2626;"></div><div>70 €</div></div>
+            </div>
+        </div>
+        
+        <div class="widget-footer">
+            <p>📍 Klicken Sie auf die Orte für Details</p>
+            <a href="tel:049714408" class="call-button">📞 04971-4408</a>
+        </div>
+    </div>
+
+    <script>
+        // Karte zentriert auf FULKUM
+        const map = L.map('compactMap', { zoomControl: true, scrollWheelZoom: false }).setView([53.6333, 7.5333], 9.3);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(map);
+        
+        const homeIcon = L.divIcon({
+            className: 'custom-home-icon',
+            html: '<div style="background: #2c5530; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; border: 3px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">🏠</div>',
+            iconSize: [40, 40],
+            iconAnchor: [20, 20]
+        });
+        
+        // Fulkum als Hauptstandort
+        L.marker([53.6333, 7.5333], {icon: homeIcon}).addTo(map).bindPopup('<strong>🌾 Landhandel Schuirmann</strong><br>Fulkum');
+        
+        const priceColors = { 20: '#10b981', 25: '#34d399', 30: '#6ee7b7', 40: '#fbbf24', 45: '#f59e0b', 50: '#f97316', 60: '#ef4444', 70: '#dc2626' };
+        
+        const deliveryZones = [
+            {name: "Esens", lat: 53.6467, lng: 7.6147, price: 20},
+            {name: "Dornum", lat: 53.6464, lng: 7.4272, price: 20},
+            {name: "Ochtersum", lat: 53.6069, lng: 7.5162, price: 20},
+            {name: "Stedesdorf", lat: 53.6333, lng: 7.6667, price: 20},
+            {name: "Westerholt", lat: 53.6333, lng: 7.5167, price: 25},
+            {name: "Nesse", lat: 53.67, lng: 7.4, price: 25},
+            {name: "Blomberg", lat: 53.6167, lng: 7.6833, price: 25},
+            {name: "Dunum", lat: 53.64, lng: 7.71, price: 25},
+            {name: "Werdum", lat: 53.6333, lng: 7.7667, price: 25},
+            {name: "Nessmersiel", lat: 53.685, lng: 7.375, price: 30},
+            {name: "Hage", lat: 53.6, lng: 7.2833, price: 30},
+            {name: "Wittmund", lat: 53.5747, lng: 7.7781, price: 30},
+            {name: "Neuharlingersiel", lat: 53.7, lng: 7.7, price: 30},
+            {name: "Aurich", lat: 53.4708, lng: 7.4835, price: 40},
+            {name: "Norden", lat: 53.5967, lng: 7.2067, price: 40},
+            {name: "Carolinensiel", lat: 53.6833, lng: 7.8, price: 40},
+            {name: "Jever", lat: 53.5753, lng: 7.9017, price: 40},
+            {name: "Rechtsupweg", lat: 53.5333, lng: 7.4167, price: 40},
+            {name: "Schortens", lat: 53.5333, lng: 7.95, price: 45},
+            {name: "Friedeburg", lat: 53.45, lng: 7.8333, price: 45},
+            {name: "Hohenkirchen", lat: 53.5167, lng: 8.0167, price: 45},
+            {name: "Marienhafe", lat: 53.5167, lng: 7.2667, price: 45},
+            {name: "Moordorf", lat: 53.4667, lng: 7.3833, price: 50},
+            {name: "Ihlow", lat: 53.4667, lng: 7.5167, price: 50},
+            {name: "Horsten", lat: 53.4167, lng: 7.7833, price: 50},
+            {name: "Engerhafe", lat: 53.4833, lng: 7.3, price: 50},
+            {name: "Großefehn", lat: 53.4167, lng: 7.6167, price: 60},
+            {name: "Wiesmoor", lat: 53.4167, lng: 7.7333, price: 60},
+            {name: "Hooksiel", lat: 53.6333, lng: 8.0833, price: 60},
+            {name: "Bedekaspel", lat: 53.5167, lng: 7.3167, price: 60},
+            {name: "Greetsiel", lat: 53.5017, lng: 7.0889, price: 70},
+            {name: "Hesel", lat: 53.2667, lng: 7.5667, price: 70},
+            {name: "Hinte", lat: 53.4167, lng: 7.1833, price: 70},
+            {name: "Zetel", lat: 53.4167, lng: 7.9667, price: 70},
+            {name: "Pilsum", lat: 53.4833, lng: 7.05, price: 70},
+            {name: "Krummhörn", lat: 53.4667, lng: 7.0667, price: 70}
+        ];
+        
+        deliveryZones.forEach(zone => {
+            const color = priceColors[zone.price];
+            const zoneIcon = L.divIcon({
+                className: 'custom-zone-icon',
+                html: `<div style="background: ${color}; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">${zone.price}€</div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16]
+            });
+            
+            L.marker([zone.lat, zone.lng], {icon: zoneIcon}).addTo(map).bindPopup(`<strong>${zone.name}</strong><br><span style="color: #4a7c4e; font-weight: bold;">${zone.price} € Lieferkosten</span>`);
+        });
+        
+        const zones = [
+            {radius: 8000, color: priceColors[20]}, {radius: 15000, color: priceColors[25]},
+            {radius: 22000, color: priceColors[30]}, {radius: 30000, color: priceColors[40]},
+            {radius: 40000, color: priceColors[50]}, {radius: 55000, color: priceColors[60]},
+            {radius: 70000, color: priceColors[70]}
+        ];
+        
+        zones.reverse().forEach(zone => {
+            L.circle([53.6333, 7.5333], { color: zone.color, fillColor: zone.color, fillOpacity: 0.08, radius: zone.radius, weight: 1.5, opacity: 0.4 }).addTo(map);
+        });
+    </script>
+</body>
+</html>
