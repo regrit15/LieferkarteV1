@@ -390,6 +390,15 @@ select.search { color: var(--text); }
 .cb-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
 .video-slot.big:has(.cbar) { display: flex; flex-direction: column; }
 
+/* Info-Anzeige, Wiedergabe-Einstellungen */
+.stats {
+  position: absolute; left: 10px; top: 10px; z-index: 4; pointer-events: none;
+  background: rgba(0,0,0,.72); color: #cfe; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 8px 10px; border-radius: 6px;
+}
+.pb-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.pb-row > span:first-child { min-width: 130px; }
+
 /* Naechste Folge */
 .nextup {
   position: absolute; right: 16px; bottom: 60px; z-index: 5; width: min(460px, calc(100% - 32px));

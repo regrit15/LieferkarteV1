@@ -89,7 +89,8 @@
             <button class="btn small" data-role="full" title="Vollbild (F)">Vollbild</button>
             <select class="btn small q-select hidden" data-role="quality" title="Qualität"></select>
             <button class="btn small" data-role="fav">&#9733; Favorit</button>
-            <button class="btn small" data-role="format" title="Bei Problemen anderes Stream-Format testen">Format</button>
+            <button class="btn small" data-role="format" title="Format nur für diesen Sender wechseln (TS/HLS)">Format</button>
+            <button class="btn small" data-role="opts" title="Puffer, Standardformat, Info-Anzeige (Taste I)">Wiedergabe</button>
             <button class="btn small" data-role="copy" title="Direktlink z. B. für VLC">Link</button>
           </div>
           <div class="player-msg" data-role="msg"></div>
@@ -122,7 +123,8 @@
           <button class="btn small" data-role="full" title="Vollbild (F)">Vollbild</button>
           <select class="btn small q-select hidden" data-role="quality" title="Qualität"></select>
           <button class="btn small" data-role="fav">&#9733; Favorit</button>
-          <button class="btn small" data-role="format" title="Bei Problemen anderes Stream-Format testen">Format</button>
+          <button class="btn small" data-role="format" title="Format nur für diesen Sender wechseln (TS/HLS)">Format</button>
+          <button class="btn small" data-role="opts" title="Puffer, Standardformat, Info-Anzeige (Taste I)">Wiedergabe</button>
           <button class="btn small hidden" data-role="compat" title="Datei über ffmpeg umwandeln (bei schwarzem Bild oder fehlendem Ton)">Kompatibilitätsmodus</button>
           <button class="btn small hidden" data-role="vlc" title="Film in VLC auf diesem Rechner öffnen">In VLC öffnen</button>
           <button class="btn small" data-role="copy" title="Direktlink z. B. für VLC">Link kopieren</button>
@@ -156,6 +158,14 @@
     <div class="detail-box">
       <button class="close" data-close="imdbDlg" title="Schließen">&times;</button>
       <div id="imdbBody"></div>
+    </div>
+  </div>
+
+  <!-- Wiedergabe-Einstellungen -->
+  <div id="playDlg" class="overlay hidden">
+    <div class="detail-box">
+      <button class="close" data-close="playDlg" title="Schließen">&times;</button>
+      <div id="playBody"></div>
     </div>
   </div>
 

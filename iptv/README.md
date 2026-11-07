@@ -76,6 +76,14 @@ Der lokale Server lädt den Programmführer des Anbieters (`xmltv.php`) im Hinte
 die der Länderfilter zeigt, und erneuert ihn alle 6 Stunden. Ein Zwischenstand liegt in `~/.sporttv`.
 Liefert der Anbieter keinen Programmführer, zeigt die Suche das an; die übrigen Funktionen laufen weiter.
 
+## Ruckler oder sich wiederholende Szenen im Live TV
+
+Standard ist das Format **TS** (durchgehender Datenstrom) mit großem Puffer (ca. 4 s Vorlauf).
+Das ist bei vielen Xtream-Anbietern deutlich ruhiger als HLS, wo Stücke doppelt geliefert werden
+können. Einstellungen im Player unter „Wiedergabe“: Standardformat, Puffer (normal / groß /
+sehr groß), Info-Anzeige. Der Knopf „Format“ wechselt nur für den aktuellen Sender.
+Die Info-Anzeige (Taste I) zeigt Puffer, verlorene Bilder, Leerlaufen und Neuverbindungen.
+
 ## Filme und Serien starten nicht (schwarzes Bild / Fehlermeldung)
 
 Viele Anbieter liefern Filme als MKV oder mit Kino-Ton (AC3, E-AC3, DTS) bzw. Bildformaten, die

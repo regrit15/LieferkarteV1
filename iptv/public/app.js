@@ -1318,8 +1318,15 @@ async function login(creds) {
   }
   state.info = res.user_info;
   const formats = res.user_info.allowed_output_formats || [];
-  const saved = store('liveFormat:' + accountKey());
-  state.liveFormat = saved || (formats.includes('m3u8') || formats.length === 0 ? 'm3u8' : 'ts');
+  // TS (durchgehender Datenstrom) ist Standard: ruhiger als HLS bei vielen Xtream-Anbietern
+  const pb = store('playback:' + accountKey()) || {};
+  state.playback = {
+    fmt: pb.fmt || (formats.length === 0 || formats.includes('ts') ? 'ts' : 'm3u8'),
+    buffer: pb.buffer || 'gross',
+    stats: !!pb.stats,
+  };
+  state.fmtOverride = store('fmtOverride:' + accountKey()) || {};
+  state.liveFormat = state.playback.fmt;
   store('creds', creds);
   loadFavs();
   loadFilter();
@@ -2322,6 +2329,8 @@ const player = { hls: null, ts: null, current: null, mount: null, saveTimer: 0, 
 const role = (r) => (player.mount ? $(`[data-role="${r}"]`, player.mount) : null);
 
 function stopPlayer() {
+  clearInterval(player.bufTimer);
+  player.prebuffering = false;
   document.querySelectorAll('.cbar').forEach((b) => b.remove());
   clearTimeout(player.retryTimer);
   player.retryTimer = null;
@@ -2370,11 +2379,21 @@ function startEngine(url, ext, live, current, rawSrc) {
   player.lastProg = Date.now();
   player.startT = null;
   setMsg('');
+  video.autoplay = !live; // Live: Start erst nach Vorlauf (startPrebuffer)
   const src = rawSrc || proxied(url);
 
   if (ext === 'm3u8') {
     if (window.Hls && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true });
+      const n = { normal: 3, gross: 5, sehrgross: 7 }[state.playback.buffer] || 3;
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        liveSyncDurationCount: live ? n : 3,     // mehr Abstand zur Live-Kante = weniger Haenger
+        liveMaxLatencyDurationCount: Infinity,   // nicht nach vorne springen
+        maxLiveSyncPlaybackRate: 1,              // kein beschleunigtes Aufholen
+        maxBufferLength: 40,
+        backBufferLength: 60,
+      });
       player.hls = hls;
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
@@ -2387,8 +2406,16 @@ function startEngine(url, ext, live, current, rawSrc) {
       video.src = src;
     }
   } else if (ext === 'ts' && window.mpegts && mpegts.isSupported()) {
-    const p = mpegts.createPlayer({ type: 'mpegts', isLive: live, url: new URL(src, location.href).href },
-      { enableWorker: true, liveBufferLatencyChasing: live, lazyLoad: !live });
+    const p = mpegts.createPlayer({ type: 'mpegts', isLive: live, url: new URL(src, location.href).href }, {
+      enableWorker: true,
+      enableStashBuffer: true,
+      stashInitialSize: 512 * 1024,
+      lazyLoad: !live,
+      liveBufferLatencyChasing: false,           // kein Springen/Aufholen: verhindert Spruenge
+      autoCleanupSourceBuffer: true,
+      autoCleanupMaxBackwardDuration: 120,
+      autoCleanupMinBackwardDuration: 60,
+    });
     player.ts = p;
     p.on(mpegts.Events.ERROR, () => onPlaybackError(live));
     p.attachMediaElement(video);
@@ -2396,7 +2423,137 @@ function startEngine(url, ext, live, current, rawSrc) {
   } else {
     video.src = src;
   }
-  video.play().catch(() => { /* Autoplay evtl. blockiert */ });
+  if (live) startPrebuffer();
+  else video.play().catch(() => { /* Autoplay evtl. blockiert */ });
+}
+
+/* ---------- Puffer fuer Live TV ---------- */
+
+const BUFFER_TARGET = { normal: 2, gross: 4, sehrgross: 8 };
+const bufferTarget = () => BUFFER_TARGET[state.playback && state.playback.buffer] || 4;
+player.stats = { rebuffers: 0, reconnects: 0 };
+
+function bufferedAhead() {
+  const b = video.buffered;
+  const t = video.currentTime;
+  for (let i = 0; i < b.length; i++) if (b.start(i) <= t + 0.3 && b.end(i) > t) return b.end(i) - t;
+  return 0;
+}
+
+// Wiedergabe erst starten, wenn genug Vorrat da ist (wie bei TV-Apps); nach Leerlaufen erneut auffuellen
+function startPrebuffer(isRebuffer) {
+  clearInterval(player.bufTimer);
+  const target = bufferTarget();
+  const started = Date.now();
+  const cur = player.current;
+  player.prebuffering = true;
+  if (isRebuffer) { player.stats.rebuffers++; video.pause(); }
+  slotNote(isRebuffer ? 'Puffer wird aufgefüllt ...' : '');
+  let lastEnd = -1;
+  let lastGrow = Date.now();
+  player.bufTimer = setInterval(() => {
+    if (player.current !== cur) { clearInterval(player.bufTimer); return; }
+    const b = video.buffered;
+    // kommen gar keine Daten mehr an, nicht lange warten, sondern neu verbinden
+    const end = b.length ? b.end(b.length - 1) : 0;
+    if (end > lastEnd + 0.01) { lastEnd = end; lastGrow = Date.now(); }
+    else if (Date.now() - lastGrow > 8000) {
+      clearInterval(player.bufTimer);
+      player.prebuffering = false;
+      scheduleReconnect('Keine Daten vom Anbieter');
+      return;
+    }
+    // Startzeit liegt evtl. vor dem ersten gepufferten Bereich: dorthin springen
+    if (b.length && video.currentTime < b.start(0) && b.start(0) - video.currentTime < 10) video.currentTime = b.start(0) + 0.05;
+    const ahead = bufferedAhead();
+    const waited = Date.now() - started;
+    if (ahead >= target || (waited > 6000 && ahead > 0.8) || waited > 15000) {
+      clearInterval(player.bufTimer);
+      player.prebuffering = false;
+      slotNote('');
+      if (!ahead && waited > 15000) { scheduleReconnect('Keine Daten vom Anbieter'); return; }
+      video.play().catch(() => {});
+    }
+  }, 200);
+}
+
+video.addEventListener('waiting', () => {
+  const cur = player.current;
+  if (!cur || cur.kind !== 'live' || player.prebuffering || video.ended || video.currentTime < 1) return;
+  startPrebuffer(true);
+});
+
+function liveFormatFor(it) {
+  return (state.fmtOverride && state.fmtOverride[String(it.stream_id)]) || state.playback.fmt;
+}
+
+function setFormatOverride(it, fmt) {
+  const id = String(it.stream_id);
+  if (fmt === state.playback.fmt) delete state.fmtOverride[id];
+  else state.fmtOverride[id] = fmt;
+  store('fmtOverride:' + accountKey(), state.fmtOverride);
+}
+
+function savePlayback() {
+  store('playback:' + accountKey(), state.playback);
+}
+
+/* ---------- Info-Anzeige (Taste I) ---------- */
+
+setInterval(() => {
+  const slot = role('slot');
+  const cur = player.current;
+  const old = document.querySelectorAll('.stats');
+  if (!state.playback || !state.playback.stats || !cur || !slot) { old.forEach((n) => n.remove()); return; }
+  let box = $('.stats', slot);
+  old.forEach((n) => { if (n !== box) n.remove(); });
+  if (!box) { box = el('div', { class: 'stats' }); slot.append(box); }
+  const q = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality() : {};
+  const fmt = cur.kind === 'live' ? (cur.ext || '').toUpperCase() : cur.mode === 'compat' ? 'Kompatibilitätsmodus' : (cur.ext || '').toUpperCase();
+  const lines = [
+    `Format: ${fmt}`,
+    `Puffer: ${bufferedAhead().toFixed(1)} s` + (cur.kind === 'live' ? ` (Ziel ${bufferTarget()} s)` : ''),
+    `Bild: ${video.videoWidth}×${video.videoHeight}`,
+    `Verlorene Bilder: ${q.droppedVideoFrames || 0} von ${q.totalVideoFrames || 0}`,
+    `Puffer leergelaufen: ${player.stats.rebuffers}×`,
+    `Neu verbunden: ${player.stats.reconnects}×`,
+  ];
+  if (player.hls && player.hls.levels && player.hls.levels.length) {
+    const lv = player.hls.levels[player.hls.currentLevel] || player.hls.levels[0];
+    if (lv && lv.bitrate) lines.push(`Bitrate: ${(lv.bitrate / 1e6).toFixed(1)} Mbit/s`);
+  }
+  box.replaceChildren(...lines.map((l) => el('div', {}, l)));
+}, 1000);
+
+function openPlayback() {
+  const pb = state.playback;
+  const fmtSel = el('select', { class: 'search', style: 'flex:none;max-width:320px' },
+    [['ts', 'TS – durchgehender Datenstrom (empfohlen)'], ['m3u8', 'HLS – in Stücken']].map(([v, l]) => el('option', { value: v, selected: pb.fmt === v }, l)));
+  const bufSel = el('select', { class: 'search', style: 'flex:none;max-width:320px' },
+    [['normal', 'Normal (ca. 2 s Vorlauf)'], ['gross', 'Groß (ca. 4 s Vorlauf, empfohlen)'], ['sehrgross', 'Sehr groß (ca. 8 s Vorlauf)']].map(([v, l]) => el('option', { value: v, selected: pb.buffer === v }, l)));
+  const stats = el('input', { type: 'checkbox', checked: pb.stats });
+  const overrides = Object.keys(state.fmtOverride || {}).length;
+  const apply = () => {
+    pb.fmt = fmtSel.value;
+    pb.buffer = bufSel.value;
+    pb.stats = stats.checked;
+    savePlayback();
+    $('#playDlg').classList.add('hidden');
+    const cur = player.current;
+    if (cur && cur.kind === 'live') { player.triedFallback = false; player.stats = { rebuffers: 0, reconnects: 0 }; cur.restart(); }
+    toast('Wiedergabe-Einstellungen gespeichert');
+  };
+  $('#playBody').replaceChildren(
+    el('h2', { style: 'margin:0 0 6px' }, 'Wiedergabe (Live TV)'),
+    el('div', { class: 'muted' }, 'Bei Rucklern oder sich wiederholenden Szenen: Format TS verwenden und den Puffer erhöhen. Mehr Puffer bedeutet, dass der Sender etwas später startet und das Bild einige Sekunden hinter dem Live-Geschehen liegt.'),
+    el('div', { class: 'pb-row' }, el('span', {}, 'Standardformat'), fmtSel),
+    el('div', { class: 'pb-row' }, el('span', {}, 'Puffer'), bufSel),
+    el('label', { class: 'f-item', style: 'display:inline-flex;margin-top:10px' }, stats, el('span', {}, 'Info-Anzeige im Bild (Taste I)')),
+    overrides ? el('div', { class: 'pb-row' },
+      el('span', { class: 'muted' }, `${overrides} Sender mit eigenem Format`),
+      el('button', { class: 'btn small', onclick: () => { state.fmtOverride = {}; store('fmtOverride:' + accountKey(), {}); toast('Zurückgesetzt'); openPlayback(); } }, 'Zurücksetzen')) : null,
+    el('div', { class: 'f-presets' }, el('button', { class: 'btn primary', onclick: apply }, 'Übernehmen')));
+  $('#playDlg').classList.remove('hidden');
 }
 
 video.addEventListener('error', () => {
@@ -2418,6 +2575,7 @@ function scheduleReconnect(reason) {
     return;
   }
   const d = RETRY_DELAYS[player.attempts++];
+  player.stats.reconnects++;
   slotNote(`${reason} – verbinde neu in ${d} s (Versuch ${player.attempts}/${RETRY_DELAYS.length})`);
   player.retryTimer = setTimeout(() => {
     player.retryTimer = null;
@@ -2482,10 +2640,9 @@ function onPlaybackError(live) {
   if (!live) { fileError(cur); return; }
   if (live && !player.triedFallback && !player.attempts) {
     player.triedFallback = true;
-    const other = state.liveFormat === 'm3u8' ? 'ts' : 'm3u8';
-    setMsg(`Stream-Fehler, versuche Format ${other.toUpperCase()} ...`);
-    state.liveFormat = other;
-    store('liveFormat:' + accountKey(), other);
+    const other = cur.ext === 'm3u8' ? 'ts' : 'm3u8';
+    setMsg(`Stream-Fehler, versuche Format ${other.toUpperCase()} für diesen Sender ...`);
+    setFormatOverride(cur.item, other);
     setTimeout(() => { if (player.current === cur) cur.restart(); }, 500);
     return;
   }
@@ -2497,6 +2654,8 @@ function setupHead(title, sub, kind, item) {
   role('sub').textContent = sub || '';
   const live = kind === 'live';
   for (const r of ['prev', 'next', 'format', 'last']) role(r).classList.toggle('hidden', !live);
+  const ob = role('opts');
+  if (ob) ob.classList.toggle('hidden', !live);
   for (const r of ['vlc', 'compat']) { const b = role(r); if (b) b.classList.toggle('hidden', live); }
   role('quality').classList.add('hidden');
   const fav = role('fav');
@@ -2511,6 +2670,7 @@ function playLive(index, retry) {
   if (!retry) {
     player.triedFallback = false;
     player.attempts = 0;
+    player.stats = { rebuffers: 0, reconnects: 0 };
     // fuer "Letzter Sender" merken
     const prev = player.lastPlayedLive;
     if (prev && String(prev.item.stream_id) !== String(it.stream_id)) player.lastLive = prev;
@@ -2519,9 +2679,9 @@ function playLive(index, retry) {
   }
   const inPreview = !$('#preview').classList.contains('hidden') && $('#player').classList.contains('hidden');
   const target = inPreview ? $('#preview') : $('#playerBox');
-  const ext = state.liveFormat;
+  const ext = liveFormatFor(it);
   const url = streamUrl('live', it.stream_id, ext);
-  const cur = { kind: 'live', index, item: it, url, list };
+  const cur = { kind: 'live', index, item: it, url, list, ext };
   cur.restart = () => { state.livePlaylist = list; playLive(index, true); };
   startEngine(url, ext, true, cur);
   mountPlayer(target);
@@ -2892,13 +3052,15 @@ for (const box of [$('#preview'), $('#playerBox')]) {
         if (cur.mode === 'compat') { const at = curPos(); stopPlayer(); player.current = cur; updateProg(cur.kind, cur.id, { pos: Math.floor(at) }); startFile(cur, { direct: true }); }
         else startCompat(cur, curPos() || savedPos(cur));
         break;
-      case 'format':
-        state.liveFormat = state.liveFormat === 'm3u8' ? 'ts' : 'm3u8';
-        store('liveFormat:' + accountKey(), state.liveFormat);
+      case 'format': {
+        const next = cur.ext === 'm3u8' ? 'ts' : 'm3u8';
+        setFormatOverride(cur.item, next);
         player.triedFallback = true;
         playLive(cur.index, true);
-        toast('Format: ' + state.liveFormat.toUpperCase());
+        toast(`Format für diesen Sender: ${next.toUpperCase()}`);
         break;
+      }
+      case 'opts': openPlayback(); break;
       case 'copy':
         try {
           await navigator.clipboard.writeText(cur.url);
@@ -2923,6 +3085,7 @@ document.addEventListener('keydown', (e) => {
     else if (overlayOpen('filterDlg')) closeOverlay('filterDlg');
     else if (overlayOpen('syncDlg')) closeOverlay('syncDlg');
     else if (overlayOpen('imdbDlg')) closeOverlay('imdbDlg');
+    else if (overlayOpen('playDlg')) closeOverlay('playDlg');
     else if (state.search) { clearSearch(); render(); $('#search').blur(); }
     return;
   }
@@ -2933,6 +3096,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'PageDown') { e.preventDefault(); stepChannel(1); }
   }
   if (player.current && e.key.toLowerCase() === 'f') goFullscreen();
+  if (e.key.toLowerCase() === 'i' && state.playback) { state.playback.stats = !state.playback.stats; savePlayback(); }
   if (e.key.toLowerCase() === 'z' || e.key === 'Backspace') {
     if (player.lastLive) { e.preventDefault(); jumpBack(); }
   }
