@@ -159,7 +159,7 @@ async function handleMeta(req, res, u) {
   }
   if (route === 'imdb' && req.method === 'POST') {
     const body = await readBody(req);
-    return sendJson(res, 200, { hasKey: !!cfg.omdbKey, ...(await meta.ratings(CONFIG_DIR, cfg.omdbKey, body.items)) });
+    return sendJson(res, 200, { hasKey: !!cfg.omdbKey, ...(await meta.ratings(CONFIG_DIR, cfg.omdbKey, body.items, !!body.background)) });
   }
   return sendJson(res, 404, { error: 'Unbekannt' });
 }

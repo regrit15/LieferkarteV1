@@ -1570,7 +1570,7 @@ async function renderHome() {
         ? hrow('Neu hinzugefügt: Filme', sortItems('vod', vod.filter((it) => it._added >= since), 'added').slice(0, 30), (it) => posterCard('vod', it), () => goTo('vod', '__added'))
         : hrow(`Aktuelle Filme (${yNow - 1}–${yNow})`, sortItems('vod', vod.filter((it) => it._year >= yNow - 1), 'year').slice(0, 30), (it) => posterCard('vod', it), () => goTo('vod', '__current')),
       hrow(`Aktuelle Serien (${yNow - 1}–${yNow})`, sortItems('series', ser.filter((it) => it._year >= yNow - 1), 'year').slice(0, 30), (it) => posterCard('series', it), () => goTo('series', '__current')),
-      hrow('Top bewertete Filme', sortItems('vod', vod.filter((it) => ratingOf('vod', it) >= 7.5), 'rating').slice(0, 30), (it) => posterCard('vod', it), () => goTo('vod', '__top')),
+      hrow('Top bewertete Filme (IMDb)', sortItems('vod', vod.filter((it) => ratingOf('vod', it) >= 7.5), 'rating').slice(0, 30), (it) => posterCard('vod', it), () => goTo('vod', '__top')),
     ].filter(Boolean));
   };
 
@@ -1622,7 +1622,6 @@ async function buildHero(hero, token) {
     meta.append(rating);
     imdbFor('vod', it, info.imdb_id).then((v) => {
       if (v && v.r) rating.replaceChildren(el('span', { class: 'sep' }), ' ', el('span', { class: 'imdb' }, 'IMDb ' + v.r));
-      else if (Number(it.rating) > 0) rating.replaceChildren(el('span', { class: 'sep' }), ` ★ ${it.rating}`);
     });
     content.replaceChildren(
       el('div', { class: 'hero-kicker' }, 'FILM'),
@@ -1929,7 +1928,7 @@ function renderSidebarInner() {
     side.append(el('div', { class: 'side-group' }, 'Entdecken'));
     side.append(catButton('__current', `Aktuell (${yNow - 1}–${yNow})`, vc.current));
     if (vc.added) side.append(catButton('__added', 'Neu hinzugefügt (30 Tage)', vc.added));
-    side.append(catButton('__top', 'Top bewertet (ab 7,5)', vc.top));
+    if (state.metaCfg && state.metaCfg.hasKey) side.append(catButton('__top', 'Top bewertet (IMDb ab 7,5)', vc.top));
   }
 
   if (kind === 'live') {
@@ -1982,7 +1981,7 @@ function currentItems() {
       const since = Date.now() / 1000 - 30 * 86400;
       return { kind, items: sorted(vis.filter((it) => it._added >= since), 'added'), title: 'Neu hinzugefügt (30 Tage)' };
     }
-    case '__top': return { kind, items: sorted(vis.filter((it) => ratingOf(kind, it) >= 7.5), 'rating'), title: 'Top bewertet (ab 7,5)' };
+    case '__top': return { kind, items: sorted(vis.filter((it) => ratingOf(kind, it) >= 7.5), 'rating'), title: 'Top bewertet (IMDb ab 7,5)' };
     default: {
       const cat = d.catById[state.cat];
       return { kind, items: sorted(vis.filter((it) => it.category_id === state.cat)), title: cat ? catLabel(cat.category_name) : '' };
@@ -2002,8 +2001,7 @@ state.sort = { vod: store('sort:vod') || 'year', series: store('sort:series') ||
 
 function ratingOf(kind, it) {
   const im = state.imdb.get(kind + ':' + itemId(kind, it));
-  if (im && im.r) return Number(im.r) || 0;
-  return providerRating(it);
+  return im && im.r ? Number(im.r) || 0 : 0; // nur IMDb zaehlt
 }
 
 // Anbieterwerte ab 9,0 stammen meist von neuen Titeln mit kaum Stimmen: ignorieren
@@ -2316,8 +2314,7 @@ function posterCard(kind, it, tokens) {
   const pic = kind === 'series' ? it.cover : it.stream_icon;
   const year = it._year || yearOf(it) || '';
   const im = state.imdb.get(kind + ':' + itemId(kind, it));
-  const pr = providerRating(it);
-  let meta = [year, !(im && im.r) && pr ? '\u2605 ' + fmtRating(pr) : ''].filter(Boolean).join(' · ');
+  let meta = year ? String(year) : '';
   let pi = null;
   if (kind === 'vod') pi = progInfo(getProg('vod', it.stream_id));
   if (kind === 'series') {
@@ -2432,9 +2429,57 @@ function updateImdbButton() {
   b.title = state.imdbError || '';
 }
 
+const imdbBg = { running: false, queue: [], done: 0 };
+
+async function startImdbBackground() {
+  if (imdbBg.running || !(state.metaCfg && state.metaCfg.hasKey)) return;
+  await Promise.all(['vod', 'series'].map((k) => loadKind(k).catch(() => null)));
+  const yNow = new Date().getFullYear();
+  const since = Date.now() / 1000 - 30 * 86400;
+  const list = [];
+  for (const kind of ['vod', 'series']) {
+    const d = state.data[kind];
+    if (!d) continue;
+    for (const it of d.items) {
+      if (!itemVisible(kind, it)) continue;
+      const k = kind + ':' + itemId(kind, it);
+      if (state.imdb.has(k)) continue;
+      const prio = (it._year >= yNow - 1 ? 2 : 0) + (it._added >= since ? 2 : 0) + (it._year >= yNow - 5 ? 1 : 0);
+      list.push({ k, kind, it, prio });
+    }
+  }
+  list.sort((a, b) => b.prio - a.prio || b.it._year - a.it._year);
+  imdbBg.queue = list;
+  imdbBg.running = true;
+  let lastRefresh = Date.now();
+  while (imdbBg.queue.length && state.metaCfg && state.metaCfg.hasKey) {
+    const batch = imdbBg.queue.splice(0, 40);
+    let r;
+    try {
+      r = await localApi('POST', '/meta/imdb', {
+        background: true,
+        items: batch.map(({ k, kind, it }) => ({ id: k, title: it.name, year: it._year || '', type: kind === 'series' ? 'series' : 'movie' })),
+      });
+    } catch { break; }
+    let fresh = 0;
+    for (const { k } of batch) if (k in r.ratings) { state.imdb.set(k, r.ratings[k]); fresh++; if (r.ratings[k] && r.ratings[k].r) applyImdb(k, r.ratings[k]); }
+    imdbBg.done += fresh;
+    if (!r.budgetLeft && fresh < batch.length) break; // Tagesbudget aufgebraucht, morgen weiter
+    if (Date.now() - lastRefresh > 20000) {
+      lastRefresh = Date.now();
+      if (KINDS.includes(state.tab) && state.tab !== 'live' && !state.search) renderSidebar();
+    }
+    await new Promise((res) => setTimeout(res, fresh === batch.length ? 150 : 1500));
+  }
+  imdbBg.running = false;
+  if (KINDS.includes(state.tab) && state.tab !== 'live' && !state.search) renderSidebar();
+}
+setInterval(() => { if (!imdbBg.running) startImdbBackground(); }, 60 * 60 * 1000);
+
 async function loadMetaCfg() {
   try { state.metaCfg = await localApi('GET', '/meta/config'); } catch { state.metaCfg = null; }
   updateImdbButton();
+  startImdbBackground();
 }
 
 function imdbHint() {
@@ -2454,6 +2499,7 @@ function openImdb() {
       state.imdb.clear();
       state.imdbError = '';
       toast(key ? 'IMDb-Bewertungen eingeschaltet' : 'IMDb-Schlüssel entfernt');
+      if (key) startImdbBackground();
       $('#imdbDlg').classList.add('hidden');
       updateImdbButton();
       render();
@@ -2474,7 +2520,7 @@ function openImdb() {
     on ? el('div', { class: 'f-presets' },
       el('span', { class: 'muted' }, 'Status: eingeschaltet' + (state.imdbError ? ' – ' + state.imdbError : '')),
       el('button', { class: 'btn', onclick: () => save('') }, 'Schlüssel entfernen')) : null,
-    el('div', { class: 'muted', style: 'margin-top:12px' }, 'Hinweise: Der kostenlose Schlüssel erlaubt etwa 1.000 Abfragen am Tag. Die App fragt nur sichtbare Titel ab und merkt sich Ergebnisse 30 Tage. Deutsche Titel findet OMDb nicht immer, weil dort meist der Originaltitel geführt wird.'));
+    el('div', { class: 'muted', style: 'margin-top:12px' }, 'Hinweise: Der kostenlose Schlüssel erlaubt etwa 1.000 Abfragen am Tag. Die App fragt sichtbare Titel sofort ab und holt im Hintergrund nach und nach weitere (aktuelle und neue zuerst, höchstens etwa 800 am Tag). Ergebnisse merkt sie sich 30 Tage. Deutsche Titel findet OMDb nicht immer, weil dort meist der Originaltitel geführt wird.'));
   $('#imdbDlg').classList.remove('hidden');
 }
 
@@ -2622,7 +2668,7 @@ async function openMovie(it) {
   try {
     info = (await api('get_vod_info', { vod_id: it.stream_id })).info || {};
   } catch { /* Beschreibung optional */ }
-  const facts = [info.releasedate || info.release_date, info.genre, info.duration, providerRating(info) && '★ ' + fmtRating(providerRating(info))]
+  const facts = [info.releasedate || info.release_date, info.genre, info.duration]
     .filter(Boolean).join(' · ');
   const actions = el('div', { class: 'detail-actions' });
   const state1 = el('div', { class: 'ep-state' });
@@ -2749,7 +2795,7 @@ async function openSeries(it) {
       img(info.cover || it.cover, 'poster-lg', name),
       el('div', {},
         el('h2', {}, name),
-        el('div', { class: 'muted' }, [info.releaseDate || info.releasedate, info.genre, providerRating(info) && '\u2605 ' + fmtRating(providerRating(info))].filter(Boolean).join(' · ')),
+        el('div', { class: 'muted' }, [info.releaseDate || info.releasedate, info.genre].filter(Boolean).join(' · ')),
         imdbLine('series', it, info.imdb_id || info.imdb),
         variantPicker('series', it),
         summary,

@@ -56,7 +56,16 @@ function cached(it) {
   return c.miss ? null : c;
 }
 
+// Abfragen pro Tag zaehlen (Hintergrund-Abfragen duerfen nur einen Teil des Tageslimits nutzen)
+const BACKGROUND_BUDGET = 800;
+function today() { return new Date().toISOString().slice(0, 10); }
+function countToday() {
+  const c = cache && cache.__count;
+  return c && c.day === today() ? c.n : 0;
+}
+
 async function omdb(key, params) {
+  if (cache) cache.__count = { day: today(), n: countToday() + 1 };
   const q = new URLSearchParams({ apikey: key, ...params });
   const res = await fetch(OMDB_URL + '?' + q, { headers: { Accept: 'application/json' } });
   const j = await res.json().catch(() => ({}));
@@ -111,7 +120,8 @@ function lookup(key, it) {
 }
 
 // items: [{ id, title, year, type, imdbId }] -> { id: {r, v, id} | null }
-async function ratings(cfgDir, key, items) {
+// background: nur Zwischenspeicher + Abfragen bis zum Tagesbudget
+async function ratings(cfgDir, key, items, background) {
   load(cfgDir);
   const out = {};
   const todo = [];
@@ -120,11 +130,22 @@ async function ratings(cfgDir, key, items) {
     if (c !== undefined) out[it.id] = c;
     else todo.push(it);
   }
+  let budgetLeft = true;
+  if (background) {
+    const left = BACKGROUND_BUDGET - countToday();
+    budgetLeft = left > 0;
+    todo.splice(Math.max(0, Math.floor(left / 2)));
+  }
   if (key && todo.length && Date.now() > blockedUntil) {
     const res = await Promise.all(todo.map((it) => lookup(key, it)));
     todo.forEach((it, i) => { if (res[i] !== undefined) out[it.id] = res[i]; });
   }
-  return { ratings: out, error: Date.now() < blockedUntil ? 'Tageslimit von OMDb erreicht, ab Mitternacht geht es weiter' : lastError };
+  return {
+    ratings: out,
+    budgetLeft: budgetLeft && Date.now() > blockedUntil,
+    usedToday: countToday(),
+    error: Date.now() < blockedUntil ? 'Tageslimit von OMDb erreicht, ab Mitternacht geht es weiter' : lastError,
+  };
 }
 
 async function testKey(key) {

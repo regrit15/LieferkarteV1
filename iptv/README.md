@@ -105,6 +105,10 @@ Muss das Bild umgerechnet werden, braucht das spürbar Rechenleistung.
 
 ## IMDb-Bewertungen
 
+Angezeigt und für „Top bewertet“ bzw. die Sortierung genutzt werden nur IMDb-Bewertungen.
+Die Bewertungen, die der Anbieter mitliefert (meist von TMDB übernommen, bei neuen Titeln oft
+unzuverlässig), blendet die App aus. Ohne IMDb-Schlüssel gibt es daher keine Bewertungen.
+
 1. Auf https://www.omdbapi.com/apikey.aspx die Variante „FREE“ wählen und E-Mail eintragen.
 2. Bestätigungslink in der E-Mail anklicken, den Schlüssel kopieren.
 3. In der App unter Filme oder Serien oben rechts „IMDb einrichten“ klicken und den Schlüssel eintragen.
