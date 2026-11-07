@@ -13,7 +13,12 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
   Reihenfolge, ohne Rücksicht auf Groß/Klein und Akzente; bei Serien auch Genre, Besetzung, Inhalt
 - Länderfilter: erkennt Kennungen wie „FR |“, „[AR]“, „TR:“, „ARABIC“ und blendet sie aus;
   Schnellwahl „Nur Deutsch“; einzelne Kategorien per „ausblenden“ in der linken Liste
-- Sport-Kategorien werden automatisch erkannt und oben angezeigt
+- Live TV mit Schwerpunkt Fußball & Formel 1: eigene Gruppe oben mit „Jetzt live: Fußball & F1“
+  (laut Programm), „Nur Fußball“, „Nur Formel 1“; andere Sportarten unter „Weiterer Sport“
+- Filme/Serien: „Aktuell“ (dieses/letztes Jahr), „Neu hinzugefügt (30 Tage)“, „Top bewertet“;
+  Sortierung neueste zuerst, zuletzt hinzugefügt, Bewertung, A–Z
+- IMDb-Bewertungen auf Postern und in der Detailansicht (über OMDb, kostenloser Schlüssel nötig,
+  siehe unten)
 - Programmsuche: die Suche findet auch Sendungen im Programm der nächsten 4 Tage (z. B. „Bayern“),
   mit Tag, Uhrzeit und Sender; laufende Sendungen mit einem Klick ansehen
 - Programmraster: in Live TV oben „Programm“ wählen; Sender untereinander, Zeit waagerecht (24 Std.),
@@ -70,6 +75,17 @@ Die Einstellung liegt im Benutzerordner unter `.sporttv` und bleibt bei App-Upda
 Der lokale Server lädt den Programmführer des Anbieters (`xmltv.php`) im Hintergrund, nur für Sender,
 die der Länderfilter zeigt, und erneuert ihn alle 6 Stunden. Ein Zwischenstand liegt in `~/.sporttv`.
 Liefert der Anbieter keinen Programmführer, zeigt die Suche das an; die übrigen Funktionen laufen weiter.
+
+## IMDb-Bewertungen
+
+1. Auf https://www.omdbapi.com/apikey.aspx die Variante „FREE“ wählen und E-Mail eintragen.
+2. Bestätigungslink in der E-Mail anklicken, den Schlüssel kopieren.
+3. In der App unter Filme oder Serien oben rechts „IMDb einrichten“ klicken und den Schlüssel eintragen.
+
+Der Schlüssel bleibt auf dem Rechner (`~/.sporttv/config.json`), auf dem zweiten Rechner einmal
+ebenso eintragen. Der kostenlose Schlüssel erlaubt etwa 1.000 Abfragen am Tag; die App fragt nur
+sichtbare Titel ab und merkt sich Ergebnisse 30 Tage. Deutsche Titel findet OMDb nicht immer,
+weil dort meist der Originaltitel geführt wird.
 
 ## Warum ein kleiner lokaler Server?
 

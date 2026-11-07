@@ -55,6 +55,14 @@
           <div class="content-head">
             <h2 id="listTitle"></h2>
             <span id="listCount" class="muted"></span>
+            <select id="sortSel" class="search sort-sel hidden" title="Sortierung">
+              <option value="year">Neueste zuerst</option>
+              <option value="added">Zuletzt hinzugefügt</option>
+              <option value="rating">Beste Bewertung</option>
+              <option value="name">A–Z</option>
+              <option value="provider">Reihenfolge des Anbieters</option>
+            </select>
+            <button id="imdbBtn" class="btn small hidden">IMDb</button>
             <div id="viewToggle" class="view-toggle hidden">
               <button data-view="list">Liste</button>
               <button data-view="grid">Programm</button>
@@ -137,6 +145,14 @@
     <div class="detail-box">
       <button class="close" data-close="syncDlg" title="Schließen">&times;</button>
       <div id="syncBody"></div>
+    </div>
+  </div>
+
+  <!-- IMDb -->
+  <div id="imdbDlg" class="overlay hidden">
+    <div class="detail-box">
+      <button class="close" data-close="imdbDlg" title="Schließen">&times;</button>
+      <div id="imdbBody"></div>
     </div>
   </div>
 

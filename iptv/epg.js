@@ -207,4 +207,16 @@ function grid(cfgDir, account, channels, from, to) {
   return { ...statusOf(st), progs: out };
 }
 
-module.exports = { ensure, search, channel, grid, storeFor, statusOf, parseTime, decodeXml };
+// Was laeuft gerade? (je Sender die aktuelle Sendung)
+function now(cfgDir, account) {
+  const st = storeFor(cfgDir, account);
+  const t = Date.now() / 1000;
+  const out = {};
+  for (const p of st.progs) {
+    if (p.s > t) break;
+    if (p.e > t) out[p.c] = { t: p.t, s: p.s, e: p.e };
+  }
+  return { ...statusOf(st), now: out };
+}
+
+module.exports = { ensure, search, channel, grid, now, storeFor, statusOf, parseTime, decodeXml };

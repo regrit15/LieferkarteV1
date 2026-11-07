@@ -13,6 +13,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { Readable } = require('stream');
 const epg = require('./epg');
+const meta = require('./meta');
 
 const PORT = Number(process.env.PORT) || 8080;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -127,9 +128,37 @@ async function handleEpg(req, res, u) {
     const body = await readBody(req, 5 * 1024 * 1024);
     return sendJson(res, 200, epg.grid(CONFIG_DIR, body.account || account, body.channels, Number(body.from) || 0, Number(body.to) || 0));
   }
+  if (route === 'now') return sendJson(res, 200, epg.now(CONFIG_DIR, account));
   if (route === 'status') return sendJson(res, 200, epg.statusOf(epg.storeFor(CONFIG_DIR, account)));
   if (route === 'search') return sendJson(res, 200, epg.search(CONFIG_DIR, account, u.searchParams.get('q') || ''));
   if (route === 'channel') return sendJson(res, 200, { list: epg.channel(CONFIG_DIR, account, u.searchParams.get('ch') || '') });
+  return sendJson(res, 404, { error: 'Unbekannt' });
+}
+
+// IMDb-Bewertungen (OMDb-Schluessel liegt nur in ~/.sporttv/config.json)
+async function handleMeta(req, res, u) {
+  if (!allowed(req, res)) return;
+  const route = u.pathname.slice('/meta/'.length);
+  const cfg = loadConfig();
+  if (route === 'config' && req.method === 'GET') return sendJson(res, 200, { hasKey: !!cfg.omdbKey });
+  if (route === 'config' && req.method === 'POST') {
+    const body = await readBody(req);
+    const key = String(body.key || '').trim();
+    if (!key) {
+      delete cfg.omdbKey;
+      saveConfig(cfg);
+      return sendJson(res, 200, { hasKey: false });
+    }
+    const err = await meta.testKey(key);
+    if (err) return sendJson(res, 400, { error: err });
+    cfg.omdbKey = key;
+    saveConfig(cfg);
+    return sendJson(res, 200, { hasKey: true });
+  }
+  if (route === 'imdb' && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, { hasKey: !!cfg.omdbKey, ...(await meta.ratings(CONFIG_DIR, cfg.omdbKey, body.items)) });
+  }
   return sendJson(res, 404, { error: 'Unbekannt' });
 }
 
@@ -293,6 +322,12 @@ function serveStatic(req, res, pathname) {
 
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://localhost');
+  if (u.pathname.startsWith('/meta/')) {
+    handleMeta(req, res, u).catch((err) => {
+      if (!res.headersSent) sendJson(res, 500, { error: err.message });
+    });
+    return;
+  }
   if (u.pathname.startsWith('/epg/')) {
     handleEpg(req, res, u).catch((err) => {
       if (!res.headersSent) sendJson(res, 500, { error: err.message });

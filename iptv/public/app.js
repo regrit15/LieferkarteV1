@@ -72,6 +72,20 @@ function hue(s) {
 
 const SPORT_RE = /sport|fu(ss|ß)ball|football|soccer|bundesliga|\bliga\b|league|dazn|eurosport|tennis|golf|\bf1\b|formel|motorsport|moto\s?gp|\bnba\b|\bnfl\b|\bnhl\b|\bmlb\b|\bufc\b|\bmma\b|box(en|ing)|\bwwe\b|cricket|rugby|olymp|champions|uefa|fifa|\bppv\b|espn|bein|setanta|\bdyn\b|handball|darts|racing|eishockey|hockey|basketball|radsport|cycling/i;
 
+// Schwerpunkt im Live TV: Fussball und Formel 1
+const FOOTBALL_RE = /fu(ss|ß)ball|football|soccer|bundesliga|\b[23]\.?\s?liga\b|champions\s?league|europa\s?league|conference\s?league|\buefa\b|\bfifa\b|\bdfb\b|pokal|premier\s?league|la\s?liga|serie\s?a\b|ligue\s?1|eredivisie|s[uü]per\s?lig|\bmls\b|sportdigital|\bdazn\b|konferenz/i;
+const F1_RE = /\bf1\b|formel\s?1|formula\s?1|grand\s?prix/i;
+const isFocus = (s) => FOOTBALL_RE.test(s) || F1_RE.test(s);
+
+function yearOf(it) {
+  for (const c of [it.year, it.releaseDate, it.releasedate, it.release_date]) {
+    const m = String(c || '').match(/\b(19\d{2}|20\d{2})\b/);
+    if (m) return Number(m[1]);
+  }
+  const m = String(it.name || '').match(/[([\s-](19\d{2}|20\d{2})[)\]]?\s*$/);
+  return m ? Number(m[1]) : 0;
+}
+
 const TAG_LABELS = {
   DE: 'Deutschland', AT: 'Österreich', CH: 'Schweiz', EN: 'Englisch', UK: 'Großbritannien', US: 'USA',
   FR: 'Frankreich', AR: 'Arabisch', SA: 'Saudi-Arabien', AE: 'Emirate', QA: 'Katar', EG: 'Ägypten', MA: 'Marokko',
@@ -201,12 +215,24 @@ function loadKind(kind) {
       it._x = norm([it.genre, it.cast, it.director, it.plot].filter(Boolean).join(' '));
       it._tag = detectTag(it.name, true);
     }
-    const sportIds = new Set(catList.filter((c) => SPORT_RE.test(c.category_name)).map((c) => c.category_id));
+    // Sport nur im Live TV; Schwerpunkt Fussball/Formel 1
+    const focusIds = new Set(kind === 'live' ? catList.filter((c) => isFocus(c.category_name)).map((c) => c.category_id) : []);
+    const sportIds = new Set(kind === 'live' ? catList.filter((c) => SPORT_RE.test(c.category_name) && !focusIds.has(c.category_id)).map((c) => c.category_id) : []);
     if (kind === 'live') {
-      for (const it of itemList) { it._dk = dupKey(it); it._q = qualityOf(it.name); }
+      for (const it of itemList) {
+        it._dk = dupKey(it);
+        it._q = qualityOf(it.name);
+        it._fb = FOOTBALL_RE.test(it.name) || (focusIds.has(it.category_id) && FOOTBALL_RE.test((catById[it.category_id] || {}).category_name || ''));
+        it._f1 = F1_RE.test(it.name) || (focusIds.has(it.category_id) && F1_RE.test((catById[it.category_id] || {}).category_name || ''));
+      }
+    } else {
+      for (const it of itemList) {
+        it._year = yearOf(it);
+        it._added = Number(it.added || it.last_modified) || 0;
+      }
     }
     const byId = new Map(itemList.map((it) => [itemId(kind, it), it]));
-    state.data[kind] = { cats: catList, catById, items: itemList, sportIds, byId };
+    state.data[kind] = { cats: catList, catById, items: itemList, sportIds, focusIds, byId };
     if (kind === 'live') computeDupes();
     return state.data[kind];
   })();
@@ -324,7 +350,7 @@ function filterChanged() {
   if (state.tab !== 'fav') {
     const d = state.data[state.tab];
     if (d && !['__all', '__sport'].includes(state.cat) && !catVisible(state.tab, state.cat)) {
-      state.cat = d.sportIds.size ? '__sport' : '__all';
+      state.cat = defaultCat(state.tab, d);
     }
   }
   renderSidebar();
@@ -906,6 +932,7 @@ function pollGuide() {
       guide.status = await localApi('GET', '/epg/status?account=' + encodeURIComponent(accountKey()));
     } catch { /* naechster Versuch */ }
     // nur neu aufbauen, wenn die Suche noch "wird geladen" zeigt
+    if (was === 'laedt' && guide.status.status !== 'laedt') refreshNow();
     if (was === 'laedt' && guide.status.status !== 'laedt' && state.search && document.querySelector('.sr-section[data-state="loading"]')) renderSearch();
     pollGuide();
   }, 3000);
@@ -1324,7 +1351,8 @@ async function showApp() {
   await switchTab(store('lastTab') || 'live');
   // restliche Bereiche im Hintergrund laden, damit die Suche sofort alles findet
   KINDS.forEach((k) => loadKind(k).catch(() => {}));
-  loadKind('live').then(() => ensureGuide()).catch(() => {});
+  loadKind('live').then(() => ensureGuide()).then(() => setTimeout(refreshNow, 1500)).catch(() => {});
+  loadMetaCfg();
 }
 
 $('#loginForm').addEventListener('submit', async (e) => {
@@ -1383,8 +1411,9 @@ async function switchTab(tab) {
     const d = await loadKind(tab);
     if (state.tab !== tab) return;
     const saved = store('lastCat:' + tab);
-    const okSaved = saved && (saved === '__all' || (['__recent', '__rem'].includes(saved) && tab === 'live') || (saved === '__sport' && d.sportIds.size) || (d.catById[saved] && catVisible(tab, saved)));
-    state.cat = okSaved ? saved : d.sportIds.size ? '__sport' : '__all';
+    const virt = tab === 'live' ? ['__recent', '__rem', '__focus', '__livefocus', '__football', '__f1', '__sport'] : ['__added', '__current', '__top'];
+    const okSaved = saved && (saved === '__all' || virt.includes(saved) || (d.catById[saved] && catVisible(tab, saved)));
+    state.cat = okSaved ? saved : defaultCat(tab, d);
     renderSidebar();
     render();
   } catch (err) {
@@ -1456,16 +1485,43 @@ function renderSidebar() {
   const counts = {};
   let total = 0;
   let sportTotal = 0;
+  const vc = { focus: 0, fb: 0, f1: 0, added: 0, current: 0, top: 0 };
+  const yNow = new Date().getFullYear();
+  const addedSince = Date.now() / 1000 - 30 * 86400;
   for (const it of d.items) {
     if (!itemVisible(kind, it)) continue;
     counts[it.category_id] = (counts[it.category_id] || 0) + 1;
     total++;
     if (d.sportIds.has(it.category_id)) sportTotal++;
+    if (kind === 'live') {
+      if (it._fb || it._f1) vc.focus++;
+      if (it._fb) vc.fb++;
+      if (it._f1) vc.f1++;
+    } else {
+      if (it._added >= addedSince) vc.added++;
+      if (it._year >= yNow - 1) vc.current++;
+      if (ratingOf(kind, it) >= 7.5) vc.top++;
+    }
   }
   const visCats = d.cats.filter((c) => catVisible(kind, c.category_id));
+  const focusCats = visCats.filter((c) => d.focusIds.has(c.category_id));
   const sportCats = visCats.filter((c) => d.sportIds.has(c.category_id));
-  const otherCats = visCats.filter((c) => !d.sportIds.has(c.category_id));
+  const otherCats = visCats.filter((c) => !d.sportIds.has(c.category_id) && !d.focusIds.has(c.category_id));
   const label = KIND_LABEL[kind];
+
+  if (kind === 'live') {
+    side.append(el('div', { class: 'side-group' }, 'Fußball & Formel 1'));
+    side.append(catButton('__livefocus', 'Jetzt live: Fußball & F1', liveFocusItems().length, { sport: true }));
+    side.append(catButton('__focus', 'Alle Fußball- & F1-Sender', vc.focus, { sport: true }));
+    if (vc.fb) side.append(catButton('__football', 'Nur Fußball', vc.fb, { sport: true }));
+    if (vc.f1) side.append(catButton('__f1', 'Nur Formel 1', vc.f1, { sport: true }));
+    for (const c of focusCats) side.append(catButton(c.category_id, c.category_name, counts[c.category_id] || 0, { sport: true, hideable: true }));
+  } else {
+    side.append(el('div', { class: 'side-group' }, 'Entdecken'));
+    side.append(catButton('__current', `Aktuell (${yNow - 1}–${yNow})`, vc.current));
+    if (vc.added) side.append(catButton('__added', 'Neu hinzugefügt (30 Tage)', vc.added));
+    side.append(catButton('__top', 'Top bewertet (ab 7,5)', vc.top));
+  }
 
   if (kind === 'live') {
     side.append(el('div', { class: 'side-group' }, 'Persönlich'));
@@ -1473,9 +1529,9 @@ function renderSidebar() {
     side.append(catButton('__rem', 'Erinnerungen', state.reminders.list.length));
   }
   if (sportCats.length) {
-    side.append(el('div', { class: 'side-group' }, 'Sport'));
-    side.append(catButton('__sport', 'Alle Sport-' + label, sportTotal, { sport: true }));
-    for (const c of sportCats) side.append(catButton(c.category_id, c.category_name, counts[c.category_id] || 0, { sport: true, hideable: true }));
+    side.append(el('div', { class: 'side-group' }, 'Weiterer Sport'));
+    side.append(catButton('__sport', 'Alle weiteren Sport-' + label, sportTotal));
+    for (const c of sportCats) side.append(catButton(c.category_id, c.category_name, counts[c.category_id] || 0, { hideable: true }));
   }
   side.append(el('div', { class: 'side-group' }, 'Kategorien'));
   side.append(catButton('__all', 'Alle ' + label, total));
@@ -1503,10 +1559,93 @@ function currentItems() {
   if (state.cat === '__recent') {
     return { kind, items: state.recent.list.map((r) => d.byId.get(String(r.stream_id)) || r), title: 'Zuletzt gesehen' };
   }
-  if (state.cat === '__all') return { kind, items: vis, title: 'Alle ' + KIND_LABEL[kind] };
-  if (state.cat === '__sport') return { kind, items: vis.filter((it) => d.sportIds.has(it.category_id)), title: 'Alle Sport-' + KIND_LABEL[kind] };
-  const cat = d.catById[state.cat];
-  return { kind, items: vis.filter((it) => it.category_id === state.cat), title: cat ? cat.category_name : '' };
+  const yNow = new Date().getFullYear();
+  const sorted = (items, how) => (kind === 'live' ? items : sortItems(kind, items, how || state.sort[kind]));
+  switch (state.cat) {
+    case '__all': return { kind, items: sorted(vis), title: 'Alle ' + KIND_LABEL[kind] };
+    case '__sport': return { kind, items: vis.filter((it) => d.sportIds.has(it.category_id)), title: 'Weiterer Sport' };
+    case '__focus': return { kind, items: vis.filter((it) => it._fb || it._f1), title: 'Fußball & Formel 1' };
+    case '__football': return { kind, items: vis.filter((it) => it._fb), title: 'Fußball' };
+    case '__f1': return { kind, items: vis.filter((it) => it._f1), title: 'Formel 1' };
+    case '__livefocus': return { kind, items: liveFocusItems(), title: 'Jetzt live: Fußball & Formel 1' };
+    case '__current': return { kind, items: sorted(vis.filter((it) => it._year >= yNow - 1)), title: `Aktuell (${yNow - 1}–${yNow})` };
+    case '__added': {
+      const since = Date.now() / 1000 - 30 * 86400;
+      return { kind, items: sorted(vis.filter((it) => it._added >= since), 'added'), title: 'Neu hinzugefügt (30 Tage)' };
+    }
+    case '__top': return { kind, items: sorted(vis.filter((it) => ratingOf(kind, it) >= 7.5), 'rating'), title: 'Top bewertet (ab 7,5)' };
+    default: {
+      const cat = d.catById[state.cat];
+      return { kind, items: sorted(vis.filter((it) => it.category_id === state.cat)), title: cat ? cat.category_name : '' };
+    }
+  }
+}
+
+function defaultCat(kind, d) {
+  if (kind === 'live') return d.items.some((it) => it._fb || it._f1) ? '__focus' : '__all';
+  const yNow = new Date().getFullYear();
+  return d.items.some((it) => it._year >= yNow - 1) ? '__current' : '__all';
+}
+
+/* ---------- Sortierung Filme/Serien ---------- */
+
+state.sort = { vod: store('sort:vod') || 'year', series: store('sort:series') || 'year' };
+
+function ratingOf(kind, it) {
+  const im = state.imdb.get(kind + ':' + itemId(kind, it));
+  if (im && im.r) return Number(im.r) || 0;
+  const r = Number(it.rating);
+  if (r > 0) return r;
+  return (Number(it.rating_5based) || 0) * 2;
+}
+
+function sortItems(kind, items, how) {
+  const arr = [...items];
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name), 'de');
+  if (how === 'year') arr.sort((a, b) => (b._year - a._year) || (b._added - a._added) || byName(a, b));
+  else if (how === 'added') arr.sort((a, b) => (b._added - a._added) || (b._year - a._year));
+  else if (how === 'rating') arr.sort((a, b) => (ratingOf(kind, b) - ratingOf(kind, a)) || (b._year - a._year));
+  else if (how === 'name') arr.sort(byName);
+  return arr;
+}
+
+$('#sortSel').addEventListener('change', (e) => {
+  const kind = state.tab;
+  if (!state.sort[kind]) return;
+  state.sort[kind] = e.target.value;
+  store('sort:' + kind, e.target.value);
+  render();
+  $('#listCol').scrollTop = 0;
+});
+
+/* ---------- Jetzt live: Fussball & F1 (aus dem Programmfuehrer) ---------- */
+
+state.nowMap = {};
+async function refreshNow() {
+  if (!state.creds) return;
+  try {
+    const r = await localApi('GET', '/epg/now?account=' + encodeURIComponent(accountKey()));
+    state.nowMap = r.now || {};
+  } catch { return; }
+  const n = document.querySelector('.cat[data-cat="__livefocus"] .n');
+  if (n) n.textContent = liveFocusItems().length;
+  if (state.tab === 'live' && state.cat === '__livefocus' && !state.search && !state.gridMode) render();
+}
+setInterval(refreshNow, 2 * 60 * 1000);
+
+function liveFocusItems() {
+  const d = state.data.live;
+  if (!d) return [];
+  const seen = new Set();
+  const out = [];
+  for (const it of d.items) {
+    if (!it.epg_channel_id || !itemVisible('live', it)) continue;
+    const p = state.nowMap[String(it.epg_channel_id)];
+    if (!p || !isFocus(p.t) || seen.has(String(it.epg_channel_id))) continue;
+    seen.add(String(it.epg_channel_id));
+    out.push(it);
+  }
+  return out;
 }
 
 function showPreview(on) {
@@ -1527,12 +1666,25 @@ function render() {
   $('#listCount').textContent = items.length + ' Einträge';
   const vt = $('#viewToggle');
   vt.classList.toggle('hidden', kind !== 'live');
+  const ss = $('#sortSel');
+  const sortable = (kind === 'vod' || kind === 'series') && KINDS.includes(state.tab) && !['__added', '__top'].includes(state.cat);
+  ss.classList.toggle('hidden', !sortable);
+  if (sortable) ss.value = state.sort[kind];
+  $('#imdbBtn').classList.toggle('hidden', !(kind === 'vod' || kind === 'series'));
+  updateImdbButton();
   vt.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.view === state.liveView));
   if (kind === 'live' && state.liveView === 'grid') return renderGrid(items);
   const list = $('#list');
   list.className = 'list ' + (kind === 'live' || kind === 'rem' ? 'rows' : 'grid');
   list.replaceChildren();
   if (kind === 'rem') list.append(reminderSettings());
+  if ((kind === 'vod' || kind === 'series') && state.metaCfg && !state.metaCfg.hasKey && !store('imdbHintOff')) list.append(imdbHint());
+  if (state.cat === '__livefocus' && !items.length) {
+    list.append(el('div', { class: 'empty' }, Object.keys(state.nowMap).length
+      ? 'Laut Programm läuft gerade kein Fußball und keine Formel 1. Tipp: Programmsuche oder Raster für die nächsten Spiele.'
+      : 'Programmdaten werden noch geladen ...'));
+    return;
+  }
   if (!items.length) {
     const msg = kind === 'rem' ? 'Keine Erinnerungen. In der Suche oder im Programm neben dem Player die Glocke anklicken.'
       : state.tab === 'fav' ? 'Noch keine Favoriten. Stern bei einem Eintrag anklicken.'
@@ -1617,6 +1769,7 @@ async function renderSearch() {
   showPreview(state.tab === 'live');
   state.gridMode = false;
   $('#viewToggle').classList.add('hidden');
+  $('#sortSel').classList.add('hidden');
   const list = $('#list');
   list.className = 'list';
   $('#listTitle').textContent = 'Suche: ' + raw;
@@ -1719,15 +1872,26 @@ function liveRow(it, list, index, tokens) {
   if (player.current && player.current.kind === 'live' && String(player.current.item.stream_id) === String(it.stream_id)) row.classList.add('playing');
   row.addEventListener('click', () => { state.livePlaylist = list; playLive(index); });
   row.addEventListener('dblclick', () => goFullscreen());
-  epgObserver.observe(row);
+  // laufende Sendung zuerst aus dem vollstaendigen Programmfuehrer, sonst Kurz-EPG beim Anbieter abfragen
+  const np = it.epg_channel_id && state.nowMap[String(it.epg_channel_id)];
+  const t = Date.now() / 1000;
+  if (np && np.s <= t && np.e > t) {
+    $('.now', row).textContent = `${fmtTime(np.s)}  ${np.t}`;
+    const bar = $('.bar', row);
+    bar.classList.remove('hidden');
+    bar.firstChild.style.width = Math.min(100, ((t - np.s) / (np.e - np.s)) * 100) + '%';
+  } else {
+    epgObserver.observe(row);
+  }
   row._item = it;
   return row;
 }
 
 function posterCard(kind, it, tokens) {
   const pic = kind === 'series' ? it.cover : it.stream_icon;
-  const year = it.year || (it.releaseDate || it.releasedate || '').slice(0, 4);
-  let meta = [year, it.rating && Number(it.rating) > 0 ? '★ ' + it.rating : ''].filter(Boolean).join(' · ');
+  const year = it._year || yearOf(it) || '';
+  const im = state.imdb.get(kind + ':' + itemId(kind, it));
+  let meta = [year, !(im && im.r) && it.rating && Number(it.rating) > 0 ? '\u2605 ' + it.rating : ''].filter(Boolean).join(' · ');
   let pi = null;
   if (kind === 'vod') pi = progInfo(getProg('vod', it.stream_id));
   if (kind === 'series') {
@@ -1735,12 +1899,152 @@ function posterCard(kind, it, tokens) {
     if (sp && sp.ep) meta = 'Zuletzt ' + epLabel(sp.ep) + (meta ? ' · ' + meta : '');
   }
   if (pi && !pi.done) meta = pi.label + (meta ? ' · ' + meta : '');
-  return el('div', { class: 'card', title: it.name, onclick: () => (kind === 'series' ? openSeries(it) : openMovie(it)) },
-    el('div', { class: 'pwrap' }, img(pic, 'poster', it.name), ...progDecor(pi)),
+  const card = el('div', { class: 'card', title: it.name, 'data-ik': kind + ':' + itemId(kind, it), onclick: () => (kind === 'series' ? openSeries(it) : openMovie(it)) },
+    el('div', { class: 'pwrap' }, img(pic, 'poster', it.name), ...progDecor(pi), im && im.r ? imdbBadge(im) : null),
     starButton(kind, it),
     el('div', { class: 'title' }, tokens ? highlight(it.name, tokens) : it.name),
     el('div', { class: 'meta' }, meta));
+  if (!state.imdb.has(kind + ':' + itemId(kind, it))) {
+    card._imdbReq = { kind, it };
+    imdbObserver.observe(card);
+  }
+  return card;
 }
+
+/* ---------- IMDb-Bewertungen (ueber OMDb, lokaler Server) ---------- */
+
+state.imdb = new Map();
+state.metaCfg = null;
+const imdbQueue = new Map();
+let imdbTimer = null;
+
+const imdbBadge = (im) => el('span', { class: 'imdb', title: im.v ? im.v + ' Stimmen auf IMDb' : 'IMDb' }, 'IMDb ' + im.r);
+
+const imdbObserver = new IntersectionObserver((entries) => {
+  for (const en of entries) {
+    if (!en.isIntersecting) continue;
+    imdbObserver.unobserve(en.target);
+    const rq = en.target._imdbReq;
+    if (!rq) continue;
+    const key = rq.kind + ':' + itemId(rq.kind, rq.it);
+    if (!state.imdb.has(key)) imdbQueue.set(key, rq);
+  }
+  if (imdbQueue.size && !imdbTimer) imdbTimer = setTimeout(flushImdb, 250);
+}, { rootMargin: '300px' });
+
+async function flushImdb() {
+  imdbTimer = null;
+  const batch = [...imdbQueue.entries()].slice(0, 40);
+  for (const [k] of batch) imdbQueue.delete(k);
+  if (!batch.length) return;
+  const items = batch.map(([k, { kind, it }]) => ({
+    id: k, title: it.name, year: it._year || yearOf(it) || '', type: kind === 'series' ? 'series' : 'movie',
+    imdbId: /^tt\d+$/.test(String(it.imdb_id || it.imdb || '')) ? String(it.imdb_id || it.imdb) : undefined,
+  }));
+  try {
+    const r = await localApi('POST', '/meta/imdb', { items });
+    state.metaCfg = { ...(state.metaCfg || {}), hasKey: r.hasKey };
+    state.imdbError = r.error || '';
+    for (const [k] of batch) {
+      if (!(k in r.ratings)) continue;
+      const v = r.ratings[k];
+      state.imdb.set(k, v);
+      if (v && v.r) applyImdb(k, v);
+    }
+    updateImdbButton();
+  } catch { /* spaeter erneut */ }
+  if (imdbQueue.size) imdbTimer = setTimeout(flushImdb, 250);
+}
+
+function applyImdb(k, v) {
+  document.querySelectorAll(`.card[data-ik="${CSS.escape(k)}"]`).forEach((card) => {
+    const w = $('.pwrap', card);
+    if (w && !$('.imdb', w)) w.append(imdbBadge(v));
+    const m = $('.meta', card);
+    if (m) m.textContent = m.textContent.replace(/\s*·?\s*\u2605 [\d.]+/, '');
+  });
+}
+
+async function imdbFor(kind, it, extraId) {
+  const k = kind + ':' + itemId(kind, it);
+  if (state.imdb.has(k)) return state.imdb.get(k);
+  try {
+    const imdbId = /^tt\d+$/.test(String(extraId || '')) ? extraId : undefined;
+    const r = await localApi('POST', '/meta/imdb', { items: [{ id: k, title: it.name, year: it._year || yearOf(it) || '', type: kind === 'series' ? 'series' : 'movie', imdbId }] });
+    if (k in r.ratings) state.imdb.set(k, r.ratings[k]);
+    return r.ratings[k] || null;
+  } catch {
+    return null;
+  }
+}
+
+function imdbLine(kind, it, extraId) {
+  const box = el('div', { class: 'imdb-line' });
+  imdbFor(kind, it, extraId).then((v) => {
+    if (!v || !v.r) return;
+    box.append(el('a', { class: 'imdb big', href: 'https://www.imdb.com/title/' + v.id + '/', target: '_blank', rel: 'noopener noreferrer' }, 'IMDb ' + v.r),
+      v.v ? el('span', { class: 'muted' }, ` ${v.v} Stimmen`) : null);
+    applyImdb(kind + ':' + itemId(kind, it), v);
+  });
+  return box;
+}
+
+function updateImdbButton() {
+  const b = $('#imdbBtn');
+  if (!b) return;
+  const on = state.metaCfg && state.metaCfg.hasKey;
+  b.textContent = on ? (state.imdbError ? 'IMDb: Hinweis' : 'IMDb an') : 'IMDb einrichten';
+  b.classList.toggle('active-filter', !!on && !state.imdbError);
+  b.title = state.imdbError || '';
+}
+
+async function loadMetaCfg() {
+  try { state.metaCfg = await localApi('GET', '/meta/config'); } catch { state.metaCfg = null; }
+  updateImdbButton();
+}
+
+function imdbHint() {
+  const off = el('button', { class: 'btn small', onclick: () => { store('imdbHintOff', true); render(); } }, 'Nicht mehr anzeigen');
+  return el('div', { class: 'rem-settings imdb-hint' },
+    el('span', {}, 'IMDb-Bewertungen anzeigen? Dafür ist ein kostenloser Schlüssel von OMDb nötig.'),
+    el('button', { class: 'btn small primary', onclick: openImdb }, 'Einrichten'), off);
+}
+
+function openImdb() {
+  const input = el('input', { class: 'search', type: 'text', placeholder: 'OMDb-Schlüssel, z. B. 1a2b3c4d', style: 'max-width:none;flex:1' });
+  const msg = el('div', { class: 'error' });
+  const save = async (key) => {
+    msg.textContent = '';
+    try {
+      state.metaCfg = await localApi('POST', '/meta/config', { key });
+      state.imdb.clear();
+      state.imdbError = '';
+      toast(key ? 'IMDb-Bewertungen eingeschaltet' : 'IMDb-Schlüssel entfernt');
+      $('#imdbDlg').classList.add('hidden');
+      updateImdbButton();
+      render();
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+  };
+  const on = state.metaCfg && state.metaCfg.hasKey;
+  $('#imdbBody').replaceChildren(
+    el('h2', { style: 'margin:0 0 6px' }, 'IMDb-Bewertungen'),
+    el('div', { class: 'muted' }, 'Die Bewertungen kommen von OMDb (omdbapi.com), einem Dienst, der IMDb-Daten bereitstellt. Der Schlüssel bleibt auf diesem Rechner.'),
+    el('ol', { class: 'imdb-steps' },
+      el('li', {}, 'Auf ', el('a', { href: 'https://www.omdbapi.com/apikey.aspx', target: '_blank', rel: 'noopener noreferrer' }, 'omdbapi.com/apikey.aspx'), ' die Variante „FREE“ wählen und E-Mail-Adresse eintragen.'),
+      el('li', {}, 'Den Bestätigungslink in der E-Mail anklicken.'),
+      el('li', {}, 'Den Schlüssel aus der E-Mail hier eintragen.')),
+    el('div', { class: 'sync-row' }, input, el('button', { class: 'btn primary', onclick: () => save(input.value) }, 'Speichern')),
+    msg,
+    on ? el('div', { class: 'f-presets' },
+      el('span', { class: 'muted' }, 'Status: eingeschaltet' + (state.imdbError ? ' – ' + state.imdbError : '')),
+      el('button', { class: 'btn', onclick: () => save('') }, 'Schlüssel entfernen')) : null,
+    el('div', { class: 'muted', style: 'margin-top:12px' }, 'Hinweise: Der kostenlose Schlüssel erlaubt etwa 1.000 Abfragen am Tag. Die App fragt nur sichtbare Titel ab und merkt sich Ergebnisse 30 Tage. Deutsche Titel findet OMDb nicht immer, weil dort meist der Originaltitel geführt wird.'));
+  $('#imdbDlg').classList.remove('hidden');
+}
+
+$('#imdbBtn').addEventListener('click', openImdb);
 
 /* ================= EPG (Programm) ================= */
 
@@ -1902,6 +2206,7 @@ async function openMovie(it) {
       el('div', {},
         el('h2', {}, it.name),
         el('div', { class: 'muted' }, facts),
+        imdbLine('vod', it, info.imdb_id || info.imdb),
         state1,
         el('p', {}, info.plot || info.description || ''),
         info.cast ? el('div', { class: 'muted' }, 'Mit: ' + info.cast) : null,
@@ -1997,7 +2302,8 @@ async function openSeries(it) {
       img(info.cover || it.cover, 'poster-lg', name),
       el('div', {},
         el('h2', {}, name),
-        el('div', { class: 'muted' }, [info.releaseDate || info.releasedate, info.genre, info.rating && Number(info.rating) > 0 && '★ ' + info.rating].filter(Boolean).join(' · ')),
+        el('div', { class: 'muted' }, [info.releaseDate || info.releasedate, info.genre, info.rating && Number(info.rating) > 0 && '\u2605 ' + info.rating].filter(Boolean).join(' · ')),
+        imdbLine('series', it, info.imdb_id || info.imdb),
         summary,
         el('p', {}, info.plot || it.plot || ''),
         info.cast ? el('div', { class: 'muted' }, 'Mit: ' + info.cast) : null,
@@ -2403,6 +2709,7 @@ document.addEventListener('keydown', (e) => {
     else if (overlayOpen('detail')) closeOverlay('detail');
     else if (overlayOpen('filterDlg')) closeOverlay('filterDlg');
     else if (overlayOpen('syncDlg')) closeOverlay('syncDlg');
+    else if (overlayOpen('imdbDlg')) closeOverlay('imdbDlg');
     else if (state.search) { clearSearch(); render(); $('#search').blur(); }
     return;
   }
