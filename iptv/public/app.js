@@ -79,6 +79,15 @@ const FOOTBALL_RE = /fu(ss|ß)ball|football|soccer|bundesliga|\b[23]\.?\s?liga\b
 const F1_RE = /\bf1\b|formel\s?1|formula\s?1|grand\s?prix/i;
 const isFocus = (s) => FOOTBALL_RE.test(s) || F1_RE.test(s);
 
+// Anzeigename: Laenderkennung vorne und Jahr in Klammern hinten weglassen
+function displayName(name) {
+  const n = String(name || '')
+    .replace(/^[^A-Za-z0-9\u00C0-\u024F]*[A-Za-z]{2,4}(?:-[A-Za-z]{2})?\s*(?:[|:\]\)\-–»•]|\s\|)\s*/, '')
+    .replace(/\s*[([]\s*(19|20)\d{2}\s*[)\]]\s*$/, '')
+    .trim();
+  return n || String(name || '');
+}
+
 function yearOf(it) {
   for (const c of [it.year, it.releaseDate, it.releasedate, it.release_date]) {
     const m = String(c || '').match(/\b(19\d{2}|20\d{2})\b/);
@@ -339,7 +348,7 @@ function hiddenCount() {
 function updateFilterButton() {
   const n = hiddenCount();
   const b = $('#filterBtn');
-  b.textContent = n ? `Länderfilter (${n} aus)` : 'Länderfilter';
+  ($('.lbl', b) || b).textContent = n ? `Länderfilter (${n} aus)` : 'Länderfilter';
   b.classList.toggle('active-filter', n > 0);
 }
 
@@ -815,7 +824,7 @@ function updateSyncButton() {
   if (!b) return;
   b.classList.toggle('active-filter', syncOn() && !sync.error);
   b.classList.toggle('sync-err', !!sync.error);
-  b.textContent = !syncOn() ? 'Abgleich' : sync.busy ? 'Abgleich ...' : sync.error ? 'Abgleich: Fehler' : 'Abgleich an';
+  ($('.lbl', b) || b).textContent = !syncOn() ? 'Abgleich' : sync.busy ? 'Abgleich ...' : sync.error ? 'Abgleich: Fehler' : 'Abgleich an';
   b.title = sync.last ? 'Zuletzt abgeglichen: ' + new Date(sync.last).toLocaleTimeString('de-DE') : '';
 }
 
@@ -1302,6 +1311,210 @@ setInterval(() => {
   document.querySelectorAll('.eg-now').forEach((n) => { n.style.left = x + 'px'; });
 }, 60000);
 
+/* ================= Startbildschirm ================= */
+
+const ICONS = {
+  tv: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="m8 3 4 4 4-4"/>',
+  film: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4M3 12h18"/>',
+  series: '<rect x="3" y="8" width="18" height="13" rx="2"/><path d="M3 8l2.5-5h3L6 8M11 8l2.5-5h3L14 8M19 8l1.5-3"/>',
+  heart: '<path d="M12 20s-7-4.4-9-9.2C1.6 7.1 4 4 7.2 4c2 0 3.4 1.1 4.8 2.7C13.4 5.1 14.8 4 16.8 4 20 4 22.4 7.1 21 10.8 19 15.6 12 20 12 20Z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  play: '<path d="M7 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 7 4.5Z" fill="currentColor" stroke="none"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+};
+
+function svgIcon(name) {
+  const span = document.createElement('span');
+  span.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+  return span.firstChild;
+}
+
+const home = { timer: null, slides: [], idx: 0, token: 0 };
+
+function showHome(on) {
+  const h = $('#home');
+  h.classList.toggle('hidden', !on);
+  document.querySelector('.main').classList.toggle('hidden', on);
+  if (on) showPreview(false);
+  if (!on) {
+    clearInterval(home.timer);
+    home.timer = null;
+    home.token++;
+    home.draw = null;
+    h.replaceChildren();
+    document.querySelector('.topbar').classList.remove('solid');
+  }
+}
+
+$('#home').addEventListener('scroll', (e) => {
+  document.querySelector('.topbar').classList.toggle('solid', e.target.scrollTop > 60);
+});
+
+function goTo(tab, cat) {
+  switchTab(tab).then(() => { if (cat) selectCat(cat); });
+}
+
+// waagerechte Reihe mit Pfeilen
+function hrow(title, items, makeCard, moreFn) {
+  if (!items.length) return null;
+  const row = el('div', { class: 'hrow' }, items.map(makeCard));
+  const scroll = (dir) => row.scrollBy({ left: dir * row.clientWidth * 0.85 });
+  return el('section', { class: 'hsec' },
+    el('div', { class: 'hsec-head' }, el('h3', {}, title), moreFn ? el('button', { class: 'more', onclick: moreFn }, 'Alle anzeigen  ›') : null),
+    el('div', { class: 'hrow-wrap' },
+      el('button', { class: 'hscroll l', title: 'Zurück', onclick: () => scroll(-1) }, '‹'),
+      row,
+      el('button', { class: 'hscroll r', title: 'Weiter', onclick: () => scroll(1) }, '›')));
+}
+
+function channelCard(it) {
+  const np = it.epg_channel_id && state.nowMap[String(it.epg_channel_id)];
+  const t = Date.now() / 1000;
+  const live = np && np.s <= t && np.e > t;
+  return el('div', { class: 'chcard', title: it.name, onclick: () => playChannelItem(it) },
+    img(it.stream_icon, 'logo', it.name),
+    el('div', { class: 'ch-name' }, it.name),
+    el('div', { class: 'ch-now' }, live ? [el('b', {}, '● Live'), ` · ${fmtTime(np.s)}–${fmtTime(np.e)} · ${np.t}`] : 'Live TV'));
+}
+
+function liveRowForHome() {
+  const now = liveFocusItems();
+  if (now.length) return hrow('Jetzt live: Fußball & Formel 1', now.slice(0, 30), channelCard, () => goTo('live', '__livefocus'));
+  const d = state.data.live;
+  if (!d) return null;
+  const focus = d.items.filter((it) => itemVisible('live', it) && (it._fb || it._f1)).slice(0, 30);
+  return hrow('Fußball & Formel 1', focus, channelCard, () => goTo('live', '__focus'));
+}
+
+function updateHomeLive() {
+  const old = document.getElementById('homeLive');
+  if (!old) return;
+  const fresh = liveRowForHome();
+  const box = el('div', { id: 'homeLive' }, fresh);
+  old.replaceWith(box);
+}
+
+function tile(cls, icon, title, sub, imgs, onclick) {
+  return el('button', { class: 'tile ' + cls, onclick },
+    svgIcon(icon),
+    el('div', { class: 't-txt' }, el('div', { class: 't-title' }, title), el('div', { class: 't-sub' }, sub)),
+    imgs.length ? el('div', { class: 't-imgs' }, imgs.map((src) => el('img', { src, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }))) : null,
+    el('span', { class: 't-arrow' }, '›'));
+}
+
+const posterUrls = (kind, n) => {
+  const d = state.data[kind];
+  if (!d) return [];
+  const key = kind === 'series' ? 'cover' : 'stream_icon';
+  return sortItems(kind, d.items.filter((it) => /^https?:/i.test(it[key] || '') && itemVisible(kind, it)), 'year').slice(0, n).map((it) => it[key]);
+};
+
+async function renderHome() {
+  const token = ++home.token;
+  const box = $('#home');
+  const hero = el('section', { class: 'hero empty' });
+  const tiles = el('div', { class: 'tiles' });
+  const rows = el('div', { class: 'hrows' });
+  box.replaceChildren(hero, tiles, rows);
+
+  const draw = () => {
+    if (token !== home.token) return;
+    const n = (k) => (state.data[k] ? state.data[k].items.filter((it) => itemVisible(k, it)).length : '…');
+    const favCount = state.favs.live.length + state.favs.vod.length + state.favs.series.length;
+    tiles.replaceChildren(
+      tile('t-live', 'tv', 'Live TV', `${n('live')} Sender`, [], () => goTo('live')),
+      tile('t-vod', 'film', 'Filme', `${n('vod')} Filme`, posterUrls('vod', 3), () => goTo('vod')),
+      tile('t-series', 'series', 'Serien', `${n('series')} Serien`, posterUrls('series', 3), () => goTo('series')),
+      tile('t-fav', 'heart', 'Favoriten', favCount ? `${favCount} gespeichert` : 'Ihre Auswahl', [], () => goTo('fav')),
+      tile('t-cont', 'clock', 'Weiter ansehen', `${contEntries().length} Titel`, [], () => goTo('cont')));
+
+    const yNow = new Date().getFullYear();
+    const since = Date.now() / 1000 - 30 * 86400;
+    const vis = (k) => (state.data[k] ? state.data[k].items.filter((it) => itemVisible(k, it)) : []);
+    const vod = vis('vod');
+    const ser = vis('series');
+    const addedVod = vod.some((it) => it._added >= since);
+    const recentCh = state.recent.list.map((r) => (state.data.live && state.data.live.byId.get(String(r.stream_id))) || r);
+    rows.replaceChildren(...[
+      el('div', { id: 'homeLive' }, liveRowForHome()),
+      hrow('Weiter ansehen', contEntries().slice(0, 20), contCard, () => goTo('cont')),
+      hrow('Zuletzt gesehene Sender', recentCh.slice(0, 20), channelCard, () => goTo('live', '__recent')),
+      addedVod
+        ? hrow('Neu hinzugefügt: Filme', sortItems('vod', vod.filter((it) => it._added >= since), 'added').slice(0, 30), (it) => posterCard('vod', it), () => goTo('vod', '__added'))
+        : hrow(`Aktuelle Filme (${yNow - 1}–${yNow})`, sortItems('vod', vod.filter((it) => it._year >= yNow - 1), 'year').slice(0, 30), (it) => posterCard('vod', it), () => goTo('vod', '__current')),
+      hrow(`Aktuelle Serien (${yNow - 1}–${yNow})`, sortItems('series', ser.filter((it) => it._year >= yNow - 1), 'year').slice(0, 30), (it) => posterCard('series', it), () => goTo('series', '__current')),
+      hrow('Top bewertete Filme', sortItems('vod', vod.filter((it) => ratingOf('vod', it) >= 7.5), 'rating').slice(0, 30), (it) => posterCard('vod', it), () => goTo('vod', '__top')),
+    ].filter(Boolean));
+  };
+
+  home.draw = draw;
+  draw();
+  await Promise.all(KINDS.map((k) => loadKind(k).catch(() => null)));
+  if (token !== home.token) return;
+  draw();
+  buildHero(hero, token);
+}
+
+async function buildHero(hero, token) {
+  const d = state.data.vod;
+  if (!d) return;
+  const cand = sortItems('vod', d.items.filter((it) => itemVisible('vod', it) && /^https?:/i.test(it.stream_icon || '')), 'year')
+    .filter((it, i, arr) => arr.findIndex((x) => x.name === it.name) === i).slice(0, 6);
+  if (!cand.length) return;
+  const key = cand.map((it) => it.stream_id).join(',');
+  let slides = home.cache && home.cache.key === key && Date.now() - home.cache.t < 10 * 60 * 1000 ? home.cache.slides : null;
+  if (!slides) {
+    slides = await Promise.all(cand.map(async (it) => {
+      let info = {};
+      try { info = (await api('get_vod_info', { vod_id: it.stream_id })).info || {}; } catch { /* ohne Zusatzinfos */ }
+      return { it, info };
+    }));
+    home.cache = { key, slides, t: Date.now() };
+  }
+  if (token !== home.token) return;
+  home.slides = slides;
+  home.idx = 0;
+  hero.classList.remove('empty');
+  const bg = el('div', { class: 'hero-bg' });
+  const content = el('div', { class: 'hero-content' });
+  const dots = el('div', { class: 'hero-dots' }, slides.map((_, i) => el('button', { title: 'Film ' + (i + 1), onclick: () => { show(i); restart(); } })));
+  hero.replaceChildren(bg, content, dots);
+
+  function show(i) {
+    home.idx = i;
+    const { it, info } = slides[i];
+    const pic = firstUrl(info.backdrop_path) || info.movie_image || it.stream_icon;
+    bg.style.opacity = 0;
+    setTimeout(() => { bg.style.backgroundImage = `url("${String(pic).replace(/"/g, '%22')}")`; bg.style.opacity = 1; }, 250);
+    const year = it._year || yearOf(it);
+    const genre = String(info.genre || '').split(/[,/]/)[0].trim();
+    const dur = info.duration ? String(info.duration).replace(/^0?(\d+):(\d{2}):\d{2}$/, (m, h, mm) => `${Number(h)} Std. ${Number(mm)} Min.`) : '';
+    const meta = el('div', { class: 'hero-meta' });
+    [year, genre, dur].filter(Boolean).forEach((x, k) => { if (k) meta.append(el('span', { class: 'sep' })); meta.append(el('span', {}, x)); });
+    const rating = el('span', {});
+    meta.append(rating);
+    imdbFor('vod', it, info.imdb_id).then((v) => {
+      if (v && v.r) rating.replaceChildren(el('span', { class: 'sep' }), ' ', el('span', { class: 'imdb' }, 'IMDb ' + v.r));
+      else if (Number(it.rating) > 0) rating.replaceChildren(el('span', { class: 'sep' }), ` ★ ${it.rating}`);
+    });
+    content.replaceChildren(
+      el('div', { class: 'hero-kicker' }, 'FILM'),
+      el('h1', {}, displayName(it.name)),
+      meta,
+      el('p', { class: 'hero-plot' }, info.plot || info.description || ''),
+      el('div', { class: 'hero-btns' },
+        el('button', { class: 'btn light', onclick: () => playMovie(it, '') }, svgIcon('play'), 'Jetzt ansehen'),
+        el('button', { class: 'btn glass', onclick: () => openMovie(it) }, svgIcon('info'), 'Mehr Infos')));
+    dots.querySelectorAll('button').forEach((b, k) => b.classList.toggle('on', k === i));
+  }
+  function restart() {
+    clearInterval(home.timer);
+    if (slides.length > 1) home.timer = setInterval(() => { if (document.visibilityState === 'visible') show((home.idx + 1) % slides.length); }, 9000);
+  }
+  show(0);
+  restart();
+}
+
 /* ================= Anmeldung ================= */
 
 function normalizeServer(raw) {
@@ -1357,7 +1570,7 @@ async function showApp() {
   if (i.max_connections) txt += ' · ' + i.max_connections + ' Verbindung(en)';
   $('#accountInfo').textContent = txt;
   updateFilterButton();
-  await switchTab(store('lastTab') || 'live');
+  await switchTab('home');
   // restliche Bereiche im Hintergrund laden, damit die Suche sofort alles findet
   KINDS.forEach((k) => loadKind(k).catch(() => {}));
   loadKind('live').then(() => ensureGuide()).then(() => setTimeout(refreshNow, 1500)).catch(() => {});
@@ -1404,6 +1617,8 @@ async function switchTab(tab) {
   store('lastTab', tab);
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
 
+  showHome(tab === 'home');
+  if (tab === 'home') { renderHome(); return; }
   if (tab === 'fav' || tab === 'cont') {
     const prefix = tab + ':';
     state.cat = state.cat && state.cat.startsWith(prefix) ? state.cat : prefix + (tab === 'fav' ? 'live' : 'all');
@@ -1639,6 +1854,7 @@ async function refreshNow() {
   const n = document.querySelector('.cat[data-cat="__livefocus"] .n');
   if (n) n.textContent = liveFocusItems().length;
   if (state.tab === 'live' && state.cat === '__livefocus' && !state.search && !state.gridMode) render();
+  if (state.tab === 'home' && !state.search) updateHomeLive();
 }
 setInterval(refreshNow, 2 * 60 * 1000);
 
@@ -1663,6 +1879,14 @@ function showPreview(on) {
 }
 
 function render() {
+  const main = document.querySelector('.main');
+  if (state.tab === 'home') {
+    if (state.search) { main.classList.add('no-side'); showHome(false); return renderSearch(); }
+    main.classList.remove('no-side');
+    showHome(true);
+    return renderHome();
+  }
+  main.classList.remove('no-side');
   if (state.search) return renderSearch();
   if (KINDS.includes(state.tab) && !state.data[state.tab]) return;
   const { kind, items, title } = currentItems();
@@ -1911,7 +2135,7 @@ function posterCard(kind, it, tokens) {
   const card = el('div', { class: 'card', title: it.name, 'data-ik': kind + ':' + itemId(kind, it), onclick: () => (kind === 'series' ? openSeries(it) : openMovie(it)) },
     el('div', { class: 'pwrap' }, img(pic, 'poster', it.name), ...progDecor(pi), im && im.r ? imdbBadge(im) : null),
     starButton(kind, it),
-    el('div', { class: 'title' }, tokens ? highlight(it.name, tokens) : it.name),
+    el('div', { class: 'title' }, tokens ? highlight(displayName(it.name), tokens) : displayName(it.name)),
     el('div', { class: 'meta' }, meta));
   if (!state.imdb.has(kind + ':' + itemId(kind, it))) {
     card._imdbReq = { kind, it };
@@ -2143,6 +2367,7 @@ function closeOverlay(id) {
     stopPlayer();
     // Fortschritt in offenen Ansichten aktualisieren
     if (detailRefresh && !$('#detail').classList.contains('hidden')) detailRefresh();
+    if (state.tab === 'home' && !state.search && home.draw) home.draw();
     if (!state.search && ['cont', 'vod', 'series'].includes(state.tab)) {
       const top = $('#listCol').scrollTop;
       renderSidebar();

@@ -31,23 +31,28 @@
 
   <!-- Hauptansicht -->
   <section id="app" class="app hidden">
+    <nav class="rail" id="tabs">
+      <div class="rail-logo" title="Sport TV"><svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3ddc84"/><stop offset="1" stop-color="#1fa2ff"/></linearGradient></defs><path d="M8 5.5v21a1.5 1.5 0 0 0 2.3 1.3l16.5-10.5a1.5 1.5 0 0 0 0-2.6L10.3 4.2A1.5 1.5 0 0 0 8 5.5Z" fill="url(#lg)"/></svg></div>
+      <button data-tab="home" class="tab" title="Start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h5v-6h4v6h5V9.5"/></svg><span class="tip">Start</span></button>
+      <button data-tab="live" class="tab" title="Live TV"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="m8 3 4 4 4-4"/></svg><span class="tip">Live TV</span></button>
+      <button data-tab="vod" class="tab" title="Filme"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4M3 12h18"/></svg><span class="tip">Filme</span></button>
+      <button data-tab="series" class="tab" title="Serien"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M3 8l2.5-5h3L6 8M11 8l2.5-5h3L14 8M19 8l1.5-3"/></svg><span class="tip">Serien</span></button>
+      <button data-tab="fav" class="tab" title="Favoriten"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-9-9.2C1.6 7.1 4 4 7.2 4c2 0 3.4 1.1 4.8 2.7C13.4 5.1 14.8 4 16.8 4 20 4 22.4 7.1 21 10.8 19 15.6 12 20 12 20Z"/></svg><span class="tip">Favoriten</span></button>
+      <button data-tab="cont" class="tab" title="Weiter ansehen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="tip">Weiter ansehen</span></button>
+    </nav>
+
+    <div class="shell">
     <header class="topbar">
-      <div class="brand">Sport TV</div>
-      <nav class="tabs" id="tabs">
-        <button data-tab="live" class="tab active">Live TV</button>
-        <button data-tab="vod" class="tab">Filme</button>
-        <button data-tab="series" class="tab">Serien</button>
-        <button data-tab="cont" class="tab">Weiter ansehen</button>
-        <button data-tab="fav" class="tab">Favoriten</button>
-      </nav>
-      <input id="search" class="search" type="search" placeholder="Sender, Filme, Serien suchen ...  ( / )">
-      <button id="filterBtn" class="btn small">Länderfilter</button>
+      <label class="search-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="search" class="search" type="search" placeholder="Sender, Filme, Serien suchen ...  ( / )"></label>
       <div class="account">
         <span id="accountInfo" class="muted"></span>
-        <button id="syncBtn" class="btn small">Abgleich</button>
-        <button id="logout" class="btn small">Abmelden</button>
+        <button id="filterBtn" class="pill-btn" title="Länderfilter"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"/></svg><span class="lbl">Länderfilter</span></button>
+        <button id="syncBtn" class="pill-btn" title="Abgleich zwischen Mac und PC"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.5-8 6 6 0 0 1 11.6 1.5A3.5 3.5 0 0 1 17.5 18Z"/><path d="m9.5 13.5 2.5-2.5 2.5 2.5M12 11v5"/></svg><span class="lbl">Abgleich</span></button>
+        <button id="logout" class="pill-btn icon-only" title="Abmelden"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 16l-4-4 4-4M6 12h10"/></svg></button>
       </div>
     </header>
+
+    <div id="home" class="home hidden"></div>
 
     <div class="main">
       <aside class="sidebar" id="sidebar"></aside>
@@ -97,6 +102,7 @@
           <div class="epg" data-role="epg"></div>
         </aside>
       </div>
+    </div>
     </div>
   </section>
 
