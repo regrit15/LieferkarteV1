@@ -47,6 +47,9 @@ verlangen das Kennwort `t=` (aus `config.json`, wird in `index.html` eingesetzt)
 
 - Live-Standardformat **TS** mit 4 s Vorlauf-Puffer, kein Aufholen zur Live-Kante (HLS lieferte
   beim Anbieter doppelte Stücke → Szenen wiederholten sich). Format-Ausnahmen nur je Sender.
+- Kompatibilitätsmodus liefert **HLS (fMP4-Stücke)** aus einem temporären Ordner (`os.tmpdir()/sporttv-hls`),
+  weil Safari einen durchgehenden MP4-Strom ohne Längenangabe nicht abspielt. Immer nur eine Umwandlung
+  gleichzeitig (Zugang erlaubt meist 1 Verbindung). Getestet nur in Chromium, Safari beim Nutzer prüfen.
 - Anbieterbewertungen werden nicht angezeigt; „Top bewertet“ = IMDb ≥ 7,5.
 - Fassungen gleicher Titel: eine Karte, bevorzugt deutsche Fassung ohne 4K (außer Qualität „Höchste“).
 - Keine Kopie fremder Apps (Name/Logo); Design nur „in der Richtung“ der Vorlagen des Nutzers.

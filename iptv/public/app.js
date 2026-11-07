@@ -2814,6 +2814,11 @@ const player = { hls: null, ts: null, current: null, mount: null, saveTimer: 0, 
 const role = (r) => (player.mount ? $(`[data-role="${r}"]`, player.mount) : null);
 
 function stopPlayer() {
+  if (player.compatSess) {
+    const id = player.compatSess;
+    player.compatSess = null;
+    fetch('/transcode/stop', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', 'X-SportTV': '1' }, body: JSON.stringify({ id }) }).catch(() => {});
+  }
   clearInterval(player.bufTimer);
   player.prebuffering = false;
   document.querySelectorAll('.cbar').forEach((b) => b.remove());
@@ -2878,6 +2883,7 @@ function startEngine(url, ext, live, current, rawSrc) {
         maxLiveSyncPlaybackRate: 1,              // kein beschleunigtes Aufholen
         maxBufferLength: 40,
         backBufferLength: 60,
+        startPosition: live ? -1 : 0,            // umgewandelte Filme von vorn (Liste waechst noch)
       });
       player.hls = hls;
       hls.on(Hls.Events.ERROR, (_, data) => {
@@ -3300,9 +3306,28 @@ async function startCompat(cur, start) {
   cur.duration = pr.duration || 0;
   const a = pickAudio(pr.audio);
   const st = Math.max(0, Math.floor(start || 0));
-  const src = `/transcode/stream?url=${encodeURIComponent(cur.url)}&start=${st}&v=${v}${a >= 0 ? '&a=' + a : ''}&t=${TOKEN}`;
   cur.restart = () => startCompat(cur, curPos());
-  startEngine(null, 'compat', false, cur, src);
+  // Umwandlung als HLS starten (Safari braucht das; Chrome spielt es ueber hls.js)
+  const token = (cur.compatToken = (cur.compatToken || 0) + 1);
+  slotNote('Umwandlung startet ...');
+  let sess;
+  try {
+    sess = await localApi('POST', '/transcode/start', { url: cur.url, start: st, v, a: a >= 0 ? a : null });
+  } catch (err) {
+    if (cur.compatToken !== token || (player.current && player.current !== cur)) return;
+    slotNote('');
+    if (v !== 'x264' && !cur.forceX264 && /Umwandlung fehlgeschlagen/.test(err.message)) { cur.forceX264 = true; startCompat(cur, st); return; }
+    fileFailed(cur, err.message);
+    return;
+  }
+  if (cur.compatToken !== token || (player.current && player.current !== cur)) {
+    localApi('POST', '/transcode/stop', { id: sess.id }).catch(() => {});
+    return;
+  }
+  slotNote('');
+  const src = `/transcode/hls/${sess.id}/index.m3u8?t=${TOKEN}`;
+  startEngine(null, 'm3u8', false, cur, src);
+  player.compatSess = sess.id;
   cur.offset = st;
   showCompatBar(cur);
   setMsg(`Kompatibilitätsmodus aktiv (${[pr.container, pr.video, pr.audio && pr.audio[0] && pr.audio[0].codec].filter(Boolean).join(', ')}${v === 'x264' ? '; Bild wird umgerechnet, braucht mehr Rechenleistung' : ''}).`);

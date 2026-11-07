@@ -339,6 +339,12 @@ function openVlc(url) {
 async function handleTranscode(req, res, u) {
   const route = u.pathname.slice('/transcode/'.length);
   const target = validTarget(u.searchParams.get('url') || '');
+  // HLS-Dateien der Umwandlung: /transcode/hls/<id>/<datei>?t=KENNWORT
+  const hm = route.match(/^hls\/([0-9a-f]{16})\/([\w.-]+)$/);
+  if (hm) {
+    if (!tokenOk(u)) return sendJson(res, 403, { error: 'Nicht erlaubt' });
+    return transcode.serveHls(res, hm[1], hm[2], TOKEN);
+  }
   if (route === 'stream') {
     if (!tokenOk(u)) return sendJson(res, 403, { error: 'Nicht erlaubt' });
     if (!target) return sendJson(res, 400, { error: 'Ungueltige URL' });
@@ -352,6 +358,24 @@ async function handleTranscode(req, res, u) {
   }
   if (!allowed(req, res)) return;
   if (route === 'status') return sendJson(res, 200, transcode.status());
+  if (route === 'start' && req.method === 'POST') {
+    const body = await readBody(req);
+    const t = validTarget(body.url || '');
+    if (!t) return sendJson(res, 400, { error: 'Ungueltige URL' });
+    try {
+      return sendJson(res, 200, await transcode.startHls({
+        url: t.href, start: Math.max(0, Number(body.start) || 0), videoMode: body.v || 'copy',
+        audioIndex: body.a != null ? Number(body.a) : -1, userAgent: USER_AGENT,
+      }));
+    } catch (err) {
+      return sendJson(res, 500, { error: err.message });
+    }
+  }
+  if (route === 'stop' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (body.id) transcode.removeSession(String(body.id));
+    return sendJson(res, 200, { ok: true });
+  }
   if (route === 'probe') {
     if (!target) return sendJson(res, 400, { error: 'Ungueltige URL' });
     return sendJson(res, 200, await transcode.probe(target.href, USER_AGENT));
