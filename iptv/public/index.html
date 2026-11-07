@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
   <title>Sport TV</title>
   <link rel="stylesheet" href="app.css">
 </head>
@@ -37,7 +38,8 @@
         <button data-tab="series" class="tab">Serien</button>
         <button data-tab="fav" class="tab">Favoriten</button>
       </nav>
-      <input id="search" class="search" type="search" placeholder="Suchen ...">
+      <input id="search" class="search" type="search" placeholder="Sender, Filme, Serien suchen ...  ( / )">
+      <button id="filterBtn" class="btn small">Länderfilter</button>
       <div class="account">
         <span id="accountInfo" class="muted"></span>
         <button id="logout" class="btn small">Abmelden</button>
@@ -47,12 +49,35 @@
     <div class="main">
       <aside class="sidebar" id="sidebar"></aside>
       <div class="content">
-        <div class="content-head">
-          <h2 id="listTitle"></h2>
-          <span id="listCount" class="muted"></span>
+        <div class="list-col" id="listCol">
+          <div class="content-head">
+            <h2 id="listTitle"></h2>
+            <span id="listCount" class="muted"></span>
+          </div>
+          <div id="list" class="list"></div>
+          <div id="listMore" class="list-more"></div>
         </div>
-        <div id="list" class="list"></div>
-        <div id="listMore" class="list-more"></div>
+
+        <!-- Vorschau fuer Live TV -->
+        <aside id="preview" class="preview hidden">
+          <div class="video-slot" data-role="slot">
+            <div class="slot-empty">Sender anklicken zum Abspielen.<br>Doppelklick = Vollbild</div>
+          </div>
+          <div class="pv-head">
+            <div class="pv-title" data-role="title"></div>
+            <div class="muted" data-role="sub"></div>
+          </div>
+          <div class="pv-actions">
+            <button class="btn small" data-role="prev" title="Vorheriger Sender (Pfeil hoch)">&#9650;</button>
+            <button class="btn small" data-role="next" title="Nächster Sender (Pfeil runter)">&#9660;</button>
+            <button class="btn small" data-role="full" title="Vollbild (F)">Vollbild</button>
+            <button class="btn small" data-role="fav">&#9733; Favorit</button>
+            <button class="btn small" data-role="format" title="Bei Problemen anderes Stream-Format testen">Format</button>
+            <button class="btn small" data-role="copy" title="Direktlink z. B. für VLC">Link</button>
+          </div>
+          <div class="player-msg" data-role="msg"></div>
+          <div class="epg" data-role="epg"></div>
+        </aside>
       </div>
     </div>
   </section>
@@ -65,26 +90,35 @@
     </div>
   </div>
 
-  <!-- Player -->
+  <!-- Player gross (Filme, Serien, Suche) -->
   <div id="player" class="overlay hidden">
-    <div class="player-box">
+    <div class="player-box" id="playerBox">
       <div class="player-head">
         <div>
-          <div id="playerTitle" class="player-title"></div>
-          <div id="playerSub" class="muted"></div>
+          <div class="player-title" data-role="title"></div>
+          <div class="muted" data-role="sub"></div>
         </div>
         <div class="player-actions">
-          <button id="prevCh" class="btn small" title="Vorheriger Sender (Pfeil hoch)">&#9650;</button>
-          <button id="nextCh" class="btn small" title="Nächster Sender (Pfeil runter)">&#9660;</button>
-          <button id="playerFav" class="btn small">Favorit</button>
-          <button id="switchFormat" class="btn small" title="Bei Problemen anderes Stream-Format testen">Format</button>
-          <button id="copyLink" class="btn small" title="Direktlink z. B. für VLC">Link kopieren</button>
+          <button class="btn small" data-role="prev" title="Vorheriger Sender (Pfeil hoch)">&#9650;</button>
+          <button class="btn small" data-role="next" title="Nächster Sender (Pfeil runter)">&#9660;</button>
+          <button class="btn small" data-role="full" title="Vollbild (F)">Vollbild</button>
+          <button class="btn small" data-role="fav">&#9733; Favorit</button>
+          <button class="btn small" data-role="format" title="Bei Problemen anderes Stream-Format testen">Format</button>
+          <button class="btn small" data-role="copy" title="Direktlink z. B. für VLC">Link kopieren</button>
           <button class="btn small" data-close="player">Schließen</button>
         </div>
       </div>
-      <video id="video" controls autoplay playsinline></video>
-      <div id="playerMsg" class="player-msg"></div>
-      <div id="epg" class="epg"></div>
+      <div class="video-slot big" data-role="slot"></div>
+      <div class="player-msg" data-role="msg"></div>
+      <div class="epg" data-role="epg"></div>
+    </div>
+  </div>
+
+  <!-- Laenderfilter -->
+  <div id="filterDlg" class="overlay hidden">
+    <div class="detail-box">
+      <button class="close" data-close="filterDlg" title="Schließen">&times;</button>
+      <div id="filterBody"></div>
     </div>
   </div>
 

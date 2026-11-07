@@ -5,13 +5,18 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
 ## Funktionen
 
 - Anmeldung mit Xtream-Codes-Zugang (Server, Benutzername, Passwort)
-- Live TV, Filme, Serien (mit Staffeln und Folgen)
+- Live TV mit Vorschau rechts: Senderliste mit laufender Sendung und Fortschritt,
+  Klick = abspielen in der Vorschau, Doppelklick = Vollbild
+- Filme und Serien mit Postern, Hintergrundbild und Folgenbildern (sofern der Anbieter sie liefert),
+  sonst farbige Titelkachel
+- Volltextsuche über Sender, Filme und Serien gleichzeitig (Taste `/`), Wörter in beliebiger
+  Reihenfolge, ohne Rücksicht auf Groß/Klein und Akzente; bei Serien auch Genre, Besetzung, Inhalt
+- Länderfilter: erkennt Kennungen wie „FR |“, „[AR]“, „TR:“, „ARABIC“ und blendet sie aus;
+  Schnellwahl „Nur Deutsch“; einzelne Kategorien per „ausblenden“ in der linken Liste
 - Sport-Kategorien werden automatisch erkannt und oben angezeigt
 - Favoriten für Sender, Filme und Serien
-- Suche im jeweiligen Bereich
-- Programmführer (EPG) im Player
 - Filme und Folgen merken sich die Wiedergabeposition
-- Sender wechseln mit Pfeil hoch/runter, Vollbild mit Taste F, Schließen mit Esc
+- Tasten: Pfeil hoch/runter = Sender wechseln, F = Vollbild, Esc = schließen, / = Suche
 
 ## Einmalige Einrichtung
 
