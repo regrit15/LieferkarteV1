@@ -722,7 +722,7 @@ function drawSync() {
     cands.length ? el('div', {},
       el('h3', { style: 'margin:16px 0 6px' }, 'Gefundenes Google Drive'),
       ...cands.map((c) => el('div', { class: 'f-row' }, el('span', {}, c), el('button', { class: 'btn primary small', onclick: () => setSyncDir(c) }, 'Verwenden'))))
-      : el('div', { class: 'muted', style: 'margin-top:14px' }, 'Kein Google Drive automatisch gefunden. Bitte Pfad eintragen, z. B. Mac: ~/Library/CloudStorage/GoogleDrive-…/Meine Ablage, Windows: G:\\Meine Ablage'),
+      : st.configured ? null : el('div', { class: 'muted', style: 'margin-top:14px' }, 'Kein Google Drive automatisch gefunden. Bitte Pfad eintragen, z. B. Mac: ~/Library/CloudStorage/GoogleDrive-…/Meine Ablage, Windows: G:\\Meine Ablage'),
     el('h3', { style: 'margin:16px 0 6px' }, 'Ordner von Hand'),
     el('div', { class: 'sync-row' }, input, el('button', { class: 'btn', onclick: () => setSyncDir(input.value) }, 'Übernehmen')),
     el('div', { class: 'f-presets' },
