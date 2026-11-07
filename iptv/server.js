@@ -12,6 +12,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { Readable } = require('stream');
+const epg = require('./epg');
 
 const PORT = Number(process.env.PORT) || 8080;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -102,11 +103,34 @@ function readBody(req, limit = 5 * 1024 * 1024) {
   });
 }
 
-async function handleSync(req, res, u) {
-  // Schutz: nur Aufrufe der eigenen Oberflaeche (fremde Webseiten koennen diesen Header nicht setzen)
-  if (req.headers['x-sporttv'] !== '1') return sendJson(res, 403, { error: 'Nicht erlaubt' });
+// Schutz: nur Aufrufe der eigenen Oberflaeche (fremde Webseiten koennen diesen Header nicht setzen)
+function allowed(req, res) {
   const origin = req.headers.origin;
-  if (origin && origin !== 'http://' + req.headers.host) return sendJson(res, 403, { error: 'Nicht erlaubt' });
+  if (req.headers['x-sporttv'] !== '1' || (origin && origin !== 'http://' + req.headers.host)) {
+    sendJson(res, 403, { error: 'Nicht erlaubt' });
+    return false;
+  }
+  return true;
+}
+
+async function handleEpg(req, res, u) {
+  if (!allowed(req, res)) return;
+  const route = u.pathname.slice('/epg/'.length);
+  const account = u.searchParams.get('account') || '';
+  if (route === 'load' && req.method === 'POST') {
+    const body = await readBody(req, 20 * 1024 * 1024);
+    if (!body.account || !body.server || !body.username) return sendJson(res, 400, { error: 'Zugangsdaten fehlen' });
+    return sendJson(res, 200, epg.ensure(CONFIG_DIR, body, USER_AGENT));
+  }
+  if (!account) return sendJson(res, 400, { error: 'Konto fehlt' });
+  if (route === 'status') return sendJson(res, 200, epg.statusOf(epg.storeFor(CONFIG_DIR, account)));
+  if (route === 'search') return sendJson(res, 200, epg.search(CONFIG_DIR, account, u.searchParams.get('q') || ''));
+  if (route === 'channel') return sendJson(res, 200, { list: epg.channel(CONFIG_DIR, account, u.searchParams.get('ch') || '') });
+  return sendJson(res, 404, { error: 'Unbekannt' });
+}
+
+async function handleSync(req, res, u) {
+  if (!allowed(req, res)) return;
 
   const cfg = loadConfig();
   const route = u.pathname.slice('/sync/'.length);
@@ -265,6 +289,12 @@ function serveStatic(req, res, pathname) {
 
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://localhost');
+  if (u.pathname.startsWith('/epg/')) {
+    handleEpg(req, res, u).catch((err) => {
+      if (!res.headersSent) sendJson(res, 500, { error: err.message });
+    });
+    return;
+  }
   if (u.pathname.startsWith('/sync/')) {
     handleSync(req, res, u).catch((err) => {
       if (!res.headersSent) sendJson(res, 500, { error: err.message });

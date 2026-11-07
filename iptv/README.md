@@ -14,6 +14,11 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
 - Länderfilter: erkennt Kennungen wie „FR |“, „[AR]“, „TR:“, „ARABIC“ und blendet sie aus;
   Schnellwahl „Nur Deutsch“; einzelne Kategorien per „ausblenden“ in der linken Liste
 - Sport-Kategorien werden automatisch erkannt und oben angezeigt
+- Programmsuche: die Suche findet auch Sendungen im Programm der nächsten 4 Tage (z. B. „Bayern“),
+  mit Tag, Uhrzeit und Sender; laufende Sendungen mit einem Klick ansehen
+- Erinnerungen: Glocke an kommenden Sendungen (Suche und Programm neben dem Player); Hinweis in der App
+  und als Systemmitteilung, Vorlauf einstellbar, auf Wunsch automatisch umschalten; Liste unter
+  Live TV → „Erinnerungen“. Funktioniert nur, solange die App im Browser geöffnet ist.
 - Automatisch neu verbinden: steht das Bild über 12 Sekunden oder bricht der Stream ab, verbindet die App
   selbst neu (bis zu 5 Versuche, Filme/Folgen laufen an derselben Stelle weiter)
 - „Letzter Sender“ (Knopf oder Taste Z) springt zwischen den zwei zuletzt gesehenen Sendern;
@@ -56,6 +61,12 @@ entstehen keine Konflikte. Je Film/Folge gilt der neuere Stand. Abgeglichen wird
 nach Änderungen und beim Schließen eines Films. Wie schnell der andere Rechner es sieht, hängt von
 Google Drive ab (meist Sekunden bis wenige Minuten). Das Passwort wird nicht in Google Drive gespeichert.
 Die Einstellung liegt im Benutzerordner unter `.sporttv` und bleibt bei App-Updates erhalten.
+
+## Programmführer
+
+Der lokale Server lädt den Programmführer des Anbieters (`xmltv.php`) im Hintergrund, nur für Sender,
+die der Länderfilter zeigt, und erneuert ihn alle 6 Stunden. Ein Zwischenstand liegt in `~/.sporttv`.
+Liefert der Anbieter keinen Programmführer, zeigt die Suche das an; die übrigen Funktionen laufen weiter.
 
 ## Warum ein kleiner lokaler Server?
 

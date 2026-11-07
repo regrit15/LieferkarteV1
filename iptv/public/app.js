@@ -144,6 +144,8 @@ const KINDS = ['live', 'vod', 'series'];
 const KIND_LABEL = { live: 'Sender', vod: 'Filme', series: 'Serien' };
 
 state.recent = { list: [], t: 0 };
+state.reminders = { list: [], t: 0, lead: 2, auto: false };
+state.guideMap = null;
 state.dupHidden = new Set();
 state.variants = new Map();
 
@@ -275,6 +277,7 @@ function dupKey(it) {
 }
 
 function computeDupes() {
+  state.guideMap = null;
   state.dupHidden = new Set();
   state.variants = new Map();
   const d = state.data.live;
@@ -313,6 +316,8 @@ function updateFilterButton() {
 function filterChanged() {
   saveFilter(true);
   computeDupes();
+  clearTimeout(guide.filterTimer);
+  guide.filterTimer = setTimeout(() => ensureGuide(), 10000);
   updateFilterButton();
   if (state.tab !== 'fav') {
     const d = state.data[state.tab];
@@ -643,8 +648,10 @@ async function playSeriesEpisode(series, epId) {
 
 const sync = { status: null, busy: false, last: 0, error: '', pushTimer: null, pushDue: 0, applying: false };
 
-async function syncApi(method, route, body) {
-  const res = await fetch('/sync/' + route, {
+const syncApi = (method, route, body) => localApi(method, '/sync/' + route, body);
+
+async function localApi(method, url, body) {
+  const res = await fetch(url, {
     method,
     headers: { 'Content-Type': 'application/json', 'X-SportTV': '1' },
     body: body ? JSON.stringify(body) : undefined,
@@ -657,7 +664,7 @@ async function syncApi(method, route, body) {
 const syncOn = () => !!(sync.status && sync.status.configured && state.creds);
 
 function localPayload() {
-  return { v: 1, t: Date.now(), prog: state.prog, seriesProg: state.seriesProg, favs: state.favs, filter: state.filter, recent: state.recent };
+  return { v: 1, t: Date.now(), prog: state.prog, seriesProg: state.seriesProg, favs: state.favs, filter: state.filter, recent: state.recent, reminders: state.reminders };
 }
 
 function unionById(a, b) {
@@ -699,6 +706,10 @@ function mergePayload(d) {
     changed = true;
     filterChanged = true;
   }
+  if (d.reminders && (d.reminders.t || 0) > (state.reminders.t || 0)) {
+    state.reminders = { lead: 2, auto: false, ...d.reminders, list: d.reminders.list || [] };
+    changed = true;
+  }
   if (d.recent && (d.recent.t || 0) > (state.recent.t || 0)) {
     state.recent = { list: d.recent.list || [], t: d.recent.t };
     changed = true;
@@ -729,6 +740,7 @@ async function syncNow(manual) {
       store('seriesprog:' + accountKey(), state.seriesProg);
       store('favs:' + accountKey(), state.favs);
       store('recent:' + accountKey(), state.recent);
+      store('reminders:' + accountKey(), state.reminders);
       saveFilter(false);
       sync.applying = false;
       refreshAfterSync(filterChanged);
@@ -762,7 +774,7 @@ function refreshAfterSync(filterChanged) {
   updateFilterButton();
   const overlayOpen = ['player', 'detail', 'filterDlg'].some((id) => !$('#' + id).classList.contains('hidden'));
   if (overlayOpen || state.search) return;
-  if (filterChanged || ['cont', 'fav'].includes(state.tab) || (state.tab === 'live' && state.cat === '__recent')) {
+  if (filterChanged || ['cont', 'fav'].includes(state.tab) || (state.tab === 'live' && ['__recent', '__rem'].includes(state.cat))) {
     renderSidebar();
     render();
   }
@@ -846,6 +858,233 @@ window.addEventListener('beforeunload', () => {
   }).catch(() => {});
 });
 
+/* ================= Programmfuehrer: Suche und Erinnerungen ================= */
+
+const guide = { status: null, timer: null, filterTimer: null };
+
+function guideChannels() {
+  const d = state.data.live;
+  if (!d) return [];
+  const set = new Set();
+  for (const it of d.items) if (it.epg_channel_id && itemVisible('live', it)) set.add(String(it.epg_channel_id));
+  return [...set];
+}
+
+// EPG-Kennung -> sichtbarer Sender (bevorzugte Variante)
+function chanFor(epgId) {
+  if (!state.guideMap) {
+    state.guideMap = new Map();
+    const d = state.data.live;
+    if (d) for (const it of d.items) {
+      if (!it.epg_channel_id || !itemVisible('live', it)) continue;
+      const k = String(it.epg_channel_id);
+      if (!state.guideMap.has(k)) state.guideMap.set(k, it);
+    }
+  }
+  return state.guideMap.get(String(epgId)) || null;
+}
+
+async function ensureGuide(force) {
+  if (!state.creds || !state.data.live) return;
+  const { server, username, password } = state.creds;
+  try {
+    guide.status = await localApi('POST', '/epg/load', { account: accountKey(), server, username, password, channels: guideChannels(), force: !!force });
+  } catch (err) {
+    guide.status = { status: 'fehler', error: err.message };
+  }
+  pollGuide();
+}
+
+function pollGuide() {
+  clearTimeout(guide.timer);
+  if (!guide.status || guide.status.status !== 'laedt') return;
+  guide.timer = setTimeout(async () => {
+    const was = guide.status.status;
+    try {
+      guide.status = await localApi('GET', '/epg/status?account=' + encodeURIComponent(accountKey()));
+    } catch { /* naechster Versuch */ }
+    // nur neu aufbauen, wenn die Suche noch "wird geladen" zeigt
+    if (was === 'laedt' && guide.status.status !== 'laedt' && state.search && document.querySelector('.sr-section[data-state="loading"]')) renderSearch();
+    pollGuide();
+  }, 3000);
+}
+setInterval(() => ensureGuide(), 30 * 60 * 1000);
+
+function guideInfoText(r) {
+  const st = r || guide.status || {};
+  if (st.status === 'laedt') return `Programmdaten werden geladen ... (${st.megabytes || 0} MB)`;
+  if (st.status === 'fehler') return 'Programmsuche nicht verfügbar: ' + (st.error || 'unbekannter Fehler');
+  if (!st.loadedAt) return 'Programmdaten noch nicht geladen.';
+  return `Programm-Stand: ${new Date(st.loadedAt).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}, `
+    + `${st.count} Sendungen auf ${st.channels} Sendern` + (st.error ? ` (letzte Aktualisierung fehlgeschlagen: ${st.error})` : '');
+}
+
+function fmtDay(ts) {
+  const d = new Date(ts * 1000);
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(d) - day(new Date())) / 86400000);
+  const label = diff === 0 ? 'Heute' : diff === 1 ? 'Morgen' : diff === -1 ? 'Gestern'
+    : d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  return label + ' ' + fmtTime(ts);
+}
+
+function playChannelItem(it) {
+  state.livePlaylist = [it];
+  playLive(0);
+}
+
+function progRow(p, ch, tokens) {
+  const now = Date.now() / 1000;
+  const running = p.s <= now && p.e > now;
+  const when = running ? `läuft · noch ${Math.max(1, Math.round((p.e - now) / 60))} Min.` : fmtDay(p.s);
+  const row = el('div', { class: 'row prog-row' + (running ? ' running' : ''), title: running ? 'Jetzt ansehen' : 'Sender jetzt einschalten' },
+    el('span', { class: 'when' }, when),
+    img(ch.stream_icon, 'logo', ch.name),
+    el('div', { class: 'txt' },
+      el('div', { class: 'name' }, highlight(p.t, tokens), p.st ? el('span', { class: 'muted' }, ' · ' + p.st) : null),
+      el('div', { class: 'now' }, ch.name + (p.d ? ' · ' : ''), p.d ? (p.inDesc ? highlight(p.d, tokens) : p.d) : ''),
+      running ? el('div', { class: 'bar' }, el('i', { style: `width:${Math.min(100, ((now - p.s) / (p.e - p.s)) * 100)}%` })) : null),
+    running ? el('span', { class: 'live-dot' }, 'LIVE') : bellButton({ ch: p.c, sid: ch.stream_id, name: ch.name, title: p.t, s: p.s, e: p.e }));
+  row.addEventListener('click', () => playChannelItem(ch));
+  return row;
+}
+
+/* ---------- Erinnerungen ---------- */
+
+const remId = (r) => r.ch + '@' + r.s;
+const isReminded = (r) => state.reminders.list.some((x) => remId(x) === remId(r));
+
+function saveReminders() {
+  state.reminders.t = Date.now();
+  store('reminders:' + accountKey(), state.reminders);
+  schedulePush(2000);
+  const n = document.querySelector('.cat[data-cat="__rem"] .n');
+  if (n) n.textContent = state.reminders.list.length;
+}
+
+function toggleReminder(r) {
+  const id = remId(r);
+  const had = isReminded(r);
+  state.reminders.list = had ? state.reminders.list.filter((x) => remId(x) !== id) : [...state.reminders.list, { ...r, sid: String(r.sid) }];
+  saveReminders();
+  if (!had && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+  toast(had ? 'Erinnerung entfernt' : `Erinnerung gesetzt: ${fmtDay(r.s)} · ${r.title}`);
+  if (state.tab === 'live' && state.cat === '__rem' && !state.search) render();
+  return !had;
+}
+
+function bellButton(r) {
+  const b = el('button', { class: 'bell' + (isReminded(r) ? ' on' : ''), title: 'Erinnern' }, '🔔');
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    b.classList.toggle('on', toggleReminder(r));
+  });
+  return b;
+}
+
+function remRow(r) {
+  const now = Date.now() / 1000;
+  const running = r.s <= now && r.e > now;
+  const ch = (state.data.live && state.data.live.byId.get(String(r.sid))) || chanFor(r.ch);
+  const del = el('button', { class: 'star', title: 'Erinnerung löschen' }, '×');
+  del.addEventListener('click', (e) => { e.stopPropagation(); toggleReminder(r); });
+  const row = el('div', { class: 'row prog-row' + (running ? ' running' : '') },
+    el('span', { class: 'when' }, running ? 'läuft' : fmtDay(r.s)),
+    img(ch && ch.stream_icon, 'logo', r.name),
+    el('div', { class: 'txt' },
+      el('div', { class: 'name' }, r.title),
+      el('div', { class: 'now' }, `${r.name} · ${fmtTime(r.s)} - ${fmtTime(r.e)}`)),
+    del);
+  row.addEventListener('click', () => { if (ch) playChannelItem(ch); });
+  return row;
+}
+
+function reminderSettings() {
+  const lead = el('select', { class: 'search', style: 'flex:none;max-width:200px' },
+    [0, 1, 2, 5, 10, 15].map((m) => el('option', { value: m, selected: Number(state.reminders.lead) === m }, m ? `${m} Min. vorher` : 'Bei Beginn')));
+  lead.addEventListener('change', () => { state.reminders.lead = Number(lead.value); saveReminders(); });
+  const auto = el('input', { type: 'checkbox', checked: !!state.reminders.auto });
+  auto.addEventListener('change', () => { state.reminders.auto = auto.checked; saveReminders(); });
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  const permBtn = perm === 'default' ? el('button', {
+    class: 'btn small',
+    onclick: () => Notification.requestPermission().then(() => render()),
+  }, 'Systemmitteilungen erlauben') : el('span', { class: 'muted' }, perm === 'granted' ? 'Systemmitteilungen: an' : perm === 'denied' ? 'Systemmitteilungen im Browser blockiert' : '');
+  return el('div', { class: 'rem-settings' },
+    el('span', { class: 'muted' }, 'Hinweis:'), lead,
+    el('label', { class: 'f-item', style: 'flex:none' }, auto, el('span', {}, 'automatisch umschalten')),
+    permBtn,
+    el('div', { class: 'muted', style: 'flex-basis:100%' }, 'Erinnerungen funktionieren nur, solange die App im Browser geöffnet ist.'));
+}
+
+const firedNow = new Set();
+
+function checkReminders() {
+  if (!state.creds) return;
+  const now = Date.now() / 1000;
+  const list = state.reminders.list;
+  const keep = list.filter((r) => r.e > now);
+  if (keep.length !== list.length) { state.reminders.list = keep; saveReminders(); }
+  const lead = (Number(state.reminders.lead) || 0) * 60;
+  for (const r of keep) {
+    const id = remId(r);
+    if (firedNow.has(id) || r.fired) continue;
+    if (now >= r.s - lead) {
+      firedNow.add(id);
+      r.fired = true;
+      store('reminders:' + accountKey(), state.reminders);
+      fireReminder(r);
+    }
+  }
+}
+setInterval(checkReminders, 10000);
+
+let remTimer = null;
+function closeReminderBar() {
+  clearInterval(remTimer);
+  remTimer = null;
+  const b = document.getElementById('remBar');
+  if (b) b.remove();
+}
+
+function switchToReminder(r) {
+  closeReminderBar();
+  const ch = (state.data.live && state.data.live.byId.get(String(r.sid))) || chanFor(r.ch);
+  if (!ch) { toast('Sender nicht gefunden'); return; }
+  if (!$('#player').classList.contains('hidden') && !(player.current && player.current.kind === 'live')) closeOverlay('player');
+  if (!$('#detail').classList.contains('hidden')) closeOverlay('detail');
+  playChannelItem(ch);
+}
+
+function fireReminder(r) {
+  const startsIn = Math.round((r.s - Date.now() / 1000) / 60);
+  const when = startsIn > 0 ? `beginnt in ${startsIn} Min. (${fmtTime(r.s)})` : 'läuft jetzt';
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      const n = new Notification(r.title, { body: `${when} auf ${r.name}`, tag: remId(r) });
+      n.onclick = () => { window.focus(); switchToReminder(r); n.close(); };
+    } catch { /* ignorieren */ }
+  }
+  closeReminderBar();
+  const label = el('div', { class: 'muted' });
+  const bar = el('div', { id: 'remBar', class: 'rem-bar' },
+    el('span', { class: 'rem-ico' }, '🔔'),
+    el('div', { class: 'nu-txt' }, el('strong', {}, r.title), el('div', {}, `${when} · ${r.name}`), label),
+    el('button', { class: 'btn primary', onclick: () => switchToReminder(r) }, '▶ Umschalten'),
+    el('button', { class: 'btn', onclick: closeReminderBar }, 'Schließen'));
+  const fs = document.fullscreenElement;
+  (fs && fs !== video ? fs : document.body).append(bar);
+  if (state.reminders.auto) {
+    let left = 10;
+    const tick = () => {
+      label.textContent = `Schaltet in ${left} s automatisch um`;
+      if (left-- <= 0) switchToReminder(r);
+    };
+    tick();
+    remTimer = setInterval(tick, 1000);
+  }
+}
+
 /* ================= Anmeldung ================= */
 
 function normalizeServer(raw) {
@@ -869,6 +1108,7 @@ async function login(creds) {
   loadFilter();
   loadProgress();
   state.recent = store('recent:' + accountKey()) || { list: [], t: 0 };
+  state.reminders = { list: [], t: 0, lead: 2, auto: false, ...(store('reminders:' + accountKey()) || {}) };
   initSync();
 }
 
@@ -896,6 +1136,7 @@ async function showApp() {
   await switchTab(store('lastTab') || 'live');
   // restliche Bereiche im Hintergrund laden, damit die Suche sofort alles findet
   KINDS.forEach((k) => loadKind(k).catch(() => {}));
+  loadKind('live').then(() => ensureGuide()).catch(() => {});
 }
 
 $('#loginForm').addEventListener('submit', async (e) => {
@@ -954,7 +1195,7 @@ async function switchTab(tab) {
     const d = await loadKind(tab);
     if (state.tab !== tab) return;
     const saved = store('lastCat:' + tab);
-    const okSaved = saved && (saved === '__all' || (saved === '__recent' && tab === 'live') || (saved === '__sport' && d.sportIds.size) || (d.catById[saved] && catVisible(tab, saved)));
+    const okSaved = saved && (saved === '__all' || (['__recent', '__rem'].includes(saved) && tab === 'live') || (saved === '__sport' && d.sportIds.size) || (d.catById[saved] && catVisible(tab, saved)));
     state.cat = okSaved ? saved : d.sportIds.size ? '__sport' : '__all';
     renderSidebar();
     render();
@@ -1041,6 +1282,7 @@ function renderSidebar() {
   if (kind === 'live') {
     side.append(el('div', { class: 'side-group' }, 'Persönlich'));
     side.append(catButton('__recent', 'Zuletzt gesehen', state.recent.list.length));
+    side.append(catButton('__rem', 'Erinnerungen', state.reminders.list.length));
   }
   if (sportCats.length) {
     side.append(el('div', { class: 'side-group' }, 'Sport'));
@@ -1067,6 +1309,9 @@ function currentItems() {
   const kind = state.tab;
   const d = state.data[kind];
   const vis = d.items.filter((it) => itemVisible(kind, it));
+  if (state.cat === '__rem') {
+    return { kind: 'rem', items: [...state.reminders.list].sort((a, b) => a.s - b.s), title: 'Erinnerungen' };
+  }
   if (state.cat === '__recent') {
     return { kind, items: state.recent.list.map((r) => d.byId.get(String(r.stream_id)) || r), title: 'Zuletzt gesehen' };
   }
@@ -1088,14 +1333,16 @@ function render() {
   state.view = items;
   state.viewKind = kind;
   state.rendered = 0;
-  showPreview(kind === 'live');
+  showPreview(kind === 'live' || kind === 'rem');
   $('#listTitle').textContent = title;
   $('#listCount').textContent = items.length + ' Einträge';
   const list = $('#list');
-  list.className = 'list ' + (kind === 'live' ? 'rows' : 'grid');
+  list.className = 'list ' + (kind === 'live' || kind === 'rem' ? 'rows' : 'grid');
   list.replaceChildren();
+  if (kind === 'rem') list.append(reminderSettings());
   if (!items.length) {
-    const msg = state.tab === 'fav' ? 'Noch keine Favoriten. Stern bei einem Eintrag anklicken.'
+    const msg = kind === 'rem' ? 'Keine Erinnerungen. In der Suche oder im Programm neben dem Player die Glocke anklicken.'
+      : state.tab === 'fav' ? 'Noch keine Favoriten. Stern bei einem Eintrag anklicken.'
       : state.tab === 'cont' ? 'Nichts angefangen. Hier erscheinen angefangene Filme und die nächste Folge Ihrer Serien.'
         : 'Keine Einträge (evtl. durch Länderfilter ausgeblendet).';
     list.append(el('div', { class: 'empty' }, msg));
@@ -1109,7 +1356,8 @@ function renderMore() {
   const end = Math.min(view.length, state.rendered + PAGE);
   const frag = document.createDocumentFragment();
   for (let i = state.rendered; i < end; i++) {
-    frag.append(kind === 'live' ? liveRow(view[i], view, i) : kind === 'cont' ? contCard(view[i]) : posterCard(kind, view[i]));
+    frag.append(kind === 'live' ? liveRow(view[i], view, i) : kind === 'rem' ? remRow(view[i])
+      : kind === 'cont' ? contCard(view[i]) : posterCard(kind, view[i]));
   }
   $('#list').append(frag);
   state.rendered = end;
@@ -1205,7 +1453,48 @@ async function renderSearch() {
       }, `Weitere ${Math.min(120, hits.length - limit)} anzeigen`) : null));
   }
   $('#listCount').textContent = total + ' Treffer';
-  list.replaceChildren(...(sections.length ? sections : [el('div', { class: 'empty' }, 'Nichts gefunden.')]));
+  const progSection = el('section', { class: 'sr-section' },
+    el('div', { class: 'sr-head' }, el('h3', {}, 'Im Programm'), el('span', { class: 'muted' }, 'suche ...')));
+  // "Im Programm" direkt nach den Sendern einordnen
+  const liveFirst = sections.length && hitsLive(tokens) ? 1 : 0;
+  sections.splice(liveFirst, 0, progSection);
+  list.replaceChildren(...sections);
+  fillProgSection(progSection, raw, tokens, total);
+}
+
+const hitsLive = (tokens) => searchKind('live', tokens).length > 0;
+
+async function fillProgSection(box, raw, tokens, otherTotal) {
+  const head = $('.sr-head', box);
+  let r;
+  try {
+    r = await localApi('GET', '/epg/search?account=' + encodeURIComponent(accountKey()) + '&q=' + encodeURIComponent(raw));
+  } catch (err) {
+    head.lastChild.textContent = 'nicht verfügbar: ' + err.message;
+    box.dataset.state = 'done';
+    return;
+  }
+  if (state.search !== raw) return;
+  const items = (r.results || []).map((p) => ({ p, ch: chanFor(p.c) })).filter((x) => x.ch);
+  const info = guideInfoText(r);
+  box.dataset.state = r.status === 'laedt' || !r.loadedAt ? 'loading' : 'done';
+  if (!items.length) {
+    head.lastChild.textContent = r.status === 'bereit' ? 'keine Treffer' : '';
+    box.append(el('div', { class: 'muted' }, info));
+    if (!otherTotal && r.status === 'bereit') box.replaceWith(el('div', { class: 'empty' }, 'Nichts gefunden.'));
+    return;
+  }
+  head.lastChild.textContent = items.length + (r.total > (r.results || []).length ? '+' : '') + ' Sendungen';
+  const key = raw + '|prog';
+  const limit = searchLimits[key] || 25;
+  box.append(...[
+    el('div', { class: 'rows' }, items.slice(0, limit).map((x) => progRow(x.p, x.ch, tokens))),
+    items.length > limit ? el('button', {
+      class: 'btn small sr-more',
+      onclick: () => { searchLimits[key] = limit + 100; renderSearch(); },
+    }, `Weitere ${Math.min(100, items.length - limit)} anzeigen`) : null,
+    el('div', { class: 'muted guide-info' }, info)].filter(Boolean));
+  $('#listCount').textContent = (otherTotal + items.length) + ' Treffer';
 }
 
 /* ---------- Zeilen und Kacheln ---------- */
@@ -1324,10 +1613,14 @@ async function showEpg(it, box) {
   const now = Date.now() / 1000;
   const rows = list.filter((e) => !e.stop || e.stop > now);
   if (!rows.length) { box.append(el('div', { class: 'muted' }, 'Kein Programm verfügbar.')); return; }
-  box.replaceChildren(...rows.map((e) => el('div', { class: 'epg-item' + (e.start <= now && e.stop > now ? ' now' : '') },
-    el('span', { class: 'epg-time' }, e.start ? `${fmtTime(e.start)} - ${fmtTime(e.stop)}` : ''),
-    el('strong', {}, e.title),
-    e.desc ? el('div', { class: 'epg-desc' }, e.desc) : null)));
+  box.replaceChildren(...rows.map((e) => {
+    const upcoming = e.start > now;
+    return el('div', { class: 'epg-item' + (e.start <= now && e.stop > now ? ' now' : '') },
+      upcoming && it.epg_channel_id ? bellButton({ ch: it.epg_channel_id, sid: it.stream_id, name: it.name, title: e.title, s: e.start, e: e.stop }) : null,
+      el('span', { class: 'epg-time' }, e.start ? `${fmtDay(e.start)} - ${fmtTime(e.stop)}` : ''),
+      el('strong', {}, e.title),
+      e.desc ? el('div', { class: 'epg-desc' }, e.desc) : null);
+  }));
 }
 
 /* ================= Detailansicht ================= */

@@ -302,6 +302,27 @@ mark { background: rgba(61, 189, 112, .35); color: inherit; border-radius: 2px; 
 .btn:disabled { opacity: .4; cursor: default; }
 select.search { color: var(--text); }
 
+/* Programmsuche, Erinnerungen */
+.prog-row .when { width: 118px; flex-shrink: 0; font-size: 12px; color: var(--muted); text-align: right; }
+.prog-row.running .when { color: #e5484d; font-weight: 600; }
+.live-dot { background: #e5484d; color: #fff; font-size: 11px; font-weight: 700; padding: 3px 7px; border-radius: 4px; flex-shrink: 0; }
+.bell {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; cursor: pointer; font-size: 15px;
+  background: none; border: 1px solid var(--line); filter: grayscale(1); opacity: .55;
+}
+.bell:hover { opacity: 1; }
+.bell.on { filter: none; opacity: 1; border-color: var(--star); background: rgba(242, 193, 78, .15); }
+.epg-item .bell { float: right; width: 28px; height: 28px; font-size: 13px; margin-left: 8px; }
+.guide-info { margin-top: 8px; font-size: 12px; }
+.rem-settings { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 12px; margin-bottom: 8px; background: var(--panel-2); border-radius: 8px; }
+.rem-bar {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 50;
+  width: min(620px, calc(100% - 32px)); display: flex; gap: 12px; align-items: center; padding: 12px 14px;
+  background: rgba(21, 26, 32, .97); border: 1px solid var(--star); border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.6);
+}
+.video-slot .rem-bar { position: absolute; }
+.rem-ico { font-size: 24px; }
+
 /* Naechste Folge */
 .nextup {
   position: absolute; right: 16px; bottom: 60px; z-index: 5; width: min(460px, calc(100% - 32px));
