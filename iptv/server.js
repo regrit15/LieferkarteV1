@@ -14,6 +14,8 @@ const crypto = require('crypto');
 const { Readable } = require('stream');
 const epg = require('./epg');
 const meta = require('./meta');
+const transcode = require('./transcode');
+const { spawn } = require('child_process');
 
 const PORT = Number(process.env.PORT) || 8080;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -241,7 +243,14 @@ function validTarget(raw) {
 }
 
 function proxied(url) {
-  return '/proxy?url=' + encodeURIComponent(url);
+  return '/proxy?url=' + encodeURIComponent(url) + '&t=' + TOKEN;
+}
+
+// Geheimes Kennwort der eigenen Oberflaeche: fremde Webseiten kennen es nicht und
+// koennen /proxy und /transcode deshalb nicht benutzen.
+function tokenOk(u) {
+  const t = u.searchParams.get('t') || '';
+  return t.length === TOKEN.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(TOKEN));
 }
 
 // HLS-Playlists umschreiben, damit Segmente ebenfalls ueber den Proxy laufen.
@@ -302,6 +311,59 @@ async function handleProxy(req, res, query) {
   stream.pipe(res);
 }
 
+// VLC auf diesem Rechner mit einer Adresse starten
+function openVlc(url) {
+  return new Promise((resolve) => {
+    let cmd;
+    let args;
+    if (process.platform === 'darwin') { cmd = 'open'; args = ['-a', 'VLC', url]; }
+    else if (process.platform === 'win32') {
+      const cands = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter(Boolean).map((d) => path.join(d, 'VideoLAN', 'VLC', 'vlc.exe'));
+      cmd = cands.find((c) => fs.existsSync(c));
+      args = [url];
+      if (!cmd) return resolve('VLC nicht gefunden. Bitte von videolan.org installieren.');
+    } else { cmd = 'vlc'; args = [url]; }
+    let done = false;
+    const p = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+    p.on('error', () => { if (!done) { done = true; resolve('VLC nicht gefunden. Bitte von videolan.org installieren.'); } });
+    p.on('exit', (code) => {
+      if (done) return;
+      done = true;
+      resolve(code ? 'VLC nicht gefunden. Bitte von videolan.org installieren.' : '');
+    });
+    p.unref();
+    setTimeout(() => { if (!done) { done = true; resolve(''); } }, 3000);
+  });
+}
+
+async function handleTranscode(req, res, u) {
+  const route = u.pathname.slice('/transcode/'.length);
+  const target = validTarget(u.searchParams.get('url') || '');
+  if (route === 'stream') {
+    if (!tokenOk(u)) return sendJson(res, 403, { error: 'Nicht erlaubt' });
+    if (!target) return sendJson(res, 400, { error: 'Ungueltige URL' });
+    return transcode.stream(req, res, {
+      url: target.href,
+      start: Math.max(0, Number(u.searchParams.get('start')) || 0),
+      videoMode: u.searchParams.get('v') || 'copy',
+      audioIndex: u.searchParams.has('a') ? Number(u.searchParams.get('a')) : -1,
+      userAgent: USER_AGENT,
+    });
+  }
+  if (!allowed(req, res)) return;
+  if (route === 'status') return sendJson(res, 200, transcode.status());
+  if (route === 'probe') {
+    if (!target) return sendJson(res, 400, { error: 'Ungueltige URL' });
+    return sendJson(res, 200, await transcode.probe(target.href, USER_AGENT));
+  }
+  if (route === 'vlc') {
+    if (!target) return sendJson(res, 400, { error: 'Ungueltige URL' });
+    const err = await openVlc(target.href);
+    return err ? sendJson(res, 404, { error: err }) : sendJson(res, 200, { ok: true });
+  }
+  return sendJson(res, 404, { error: 'Unbekannt' });
+}
+
 function serveStatic(req, res, pathname) {
   let rel = decodeURIComponent(pathname);
   if (rel === '/') rel = '/index.html';
@@ -316,9 +378,17 @@ function serveStatic(req, res, pathname) {
       return res.end('Nicht gefunden');
     }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    // Kennwort in die Oberflaeche einsetzen
+    if (file.endsWith('index.html')) return res.end(String(data).replace('%%SPORTTV_TOKEN%%', TOKEN));
     res.end(data);
   });
 }
+
+const TOKEN = (() => {
+  const cfg = loadConfig();
+  if (!cfg.token) { cfg.token = crypto.randomBytes(18).toString('hex'); saveConfig(cfg); }
+  return cfg.token;
+})();
 
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://localhost');
@@ -340,7 +410,15 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (u.pathname.startsWith('/transcode/')) {
+    handleTranscode(req, res, u).catch((err) => {
+      if (!res.headersSent) sendJson(res, 500, { error: err.message });
+      else res.destroy();
+    });
+    return;
+  }
   if (u.pathname === '/proxy') {
+    if (!tokenOk(u)) return sendJson(res, 403, { error: 'Nicht erlaubt' });
     handleProxy(req, res, u.searchParams).catch((err) => {
       if (!res.headersSent) sendJson(res, 500, { error: err.message });
       else res.destroy();
@@ -353,4 +431,6 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`IPTV-App laeuft: http://localhost:${PORT}`);
   console.log('Fenster offen lassen. Beenden mit Strg+C.');
+  const ff = transcode.status();
+  console.log(ff.available ? `ffmpeg gefunden (${ff.source}): Kompatibilitaetsmodus fuer Filme verfuegbar.` : 'ffmpeg nicht gefunden: Kompatibilitaetsmodus fuer Filme nicht verfuegbar (siehe README).');
 });

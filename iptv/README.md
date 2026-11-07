@@ -76,6 +76,25 @@ Der lokale Server lädt den Programmführer des Anbieters (`xmltv.php`) im Hinte
 die der Länderfilter zeigt, und erneuert ihn alle 6 Stunden. Ein Zwischenstand liegt in `~/.sporttv`.
 Liefert der Anbieter keinen Programmführer, zeigt die Suche das an; die übrigen Funktionen laufen weiter.
 
+## Filme und Serien starten nicht (schwarzes Bild / Fehlermeldung)
+
+Viele Anbieter liefern Filme als MKV oder mit Kino-Ton (AC3, E-AC3, DTS) bzw. Bildformaten, die
+Browser nicht abspielen. Dafür gibt es den **Kompatibilitätsmodus**: der lokale Server wandelt die
+Datei mit dem kostenlosen Programm ffmpeg unterwegs um (Ton immer in AAC, Bild nur wenn nötig).
+
+1. Einmalig ffmpeg installieren:
+   - Mac: Doppelklick auf `ffmpeg-installieren.command` (beim ersten Mal ggf. wie bei
+     `start-mac.command` über Systemeinstellungen → Datenschutz & Sicherheit → „Dennoch öffnen“).
+   - Windows: Doppelklick auf `ffmpeg-installieren.bat`.
+   - Alternativ (Mac mit Homebrew): `brew install ffmpeg`.
+2. App neu starten. Im Terminal-Fenster steht dann „ffmpeg gefunden“.
+
+Danach schaltet die App automatisch um, wenn ein Film nicht startet, kein Bild zeigt oder als MKV
+vorliegt. Im Player gibt es außerdem den Knopf „Kompatibilitätsmodus“ (von Hand umschalten,
+z. B. wenn der Ton fehlt) und „In VLC öffnen“ (startet VLC auf diesem Rechner, falls installiert).
+Im Kompatibilitätsmodus erscheint unter dem Bild eine eigene Zeitleiste zum Springen.
+Muss das Bild umgerechnet werden, braucht das spürbar Rechenleistung.
+
 ## IMDb-Bewertungen
 
 1. Auf https://www.omdbapi.com/apikey.aspx die Variante „FREE“ wählen und E-Mail eintragen.

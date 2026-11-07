@@ -29,7 +29,9 @@ function store(key, value) {
   }
 }
 
-const proxied = (url) => '/proxy?url=' + encodeURIComponent(url);
+// Kennwort der eigenen Oberflaeche (setzt der lokale Server beim Ausliefern ein)
+const TOKEN = (document.querySelector('meta[name="sporttv-token"]') || {}).content || '';
+const proxied = (url) => '/proxy?url=' + encodeURIComponent(url) + '&t=' + TOKEN;
 
 function b64(s) {
   if (!s) return '';
@@ -2320,6 +2322,7 @@ const player = { hls: null, ts: null, current: null, mount: null, saveTimer: 0, 
 const role = (r) => (player.mount ? $(`[data-role="${r}"]`, player.mount) : null);
 
 function stopPlayer() {
+  document.querySelectorAll('.cbar').forEach((b) => b.remove());
   clearTimeout(player.retryTimer);
   player.retryTimer = null;
   if (player.current && player.current.kind !== 'live') { saveCurrentPos(); schedulePush(1500); }
@@ -2360,14 +2363,14 @@ function mountPlayer(target) {
   role('slot').replaceChildren(video);
 }
 
-function startEngine(url, ext, live, current) {
+function startEngine(url, ext, live, current, rawSrc) {
   stopPlayer();
   player.current = current;
   player.lastT = -1;
   player.lastProg = Date.now();
   player.startT = null;
   setMsg('');
-  const src = proxied(url);
+  const src = rawSrc || proxied(url);
 
   if (ext === 'm3u8') {
     if (window.Hls && Hls.isSupported()) {
@@ -2438,7 +2441,37 @@ setInterval(() => {
     if (player.attempts && video.currentTime - player.startT > 20) player.attempts = 0;
     return;
   }
-  if (now - player.lastProg > 12000) scheduleReconnect('Bild steht');
+  if (now - player.lastProg > 12000) {
+    // Datei startet nicht: zuerst Kompatibilitaetsmodus versuchen, sonst neu verbinden
+    if (cur.kind !== 'live' && cur.mode !== 'compat' && compat.status && compat.status.available && !cur.triedCompat) {
+      cur.triedCompat = true;
+      slotNote('Datei startet nicht – wechsle in den Kompatibilitätsmodus ...');
+      startCompat(cur, Math.max(curPos(), savedPos(cur)));
+      return;
+    }
+    scheduleReconnect('Bild steht');
+  }
+}, 2000);
+
+// Ton laeuft, aber kein Bild (Videoformat wird vom Browser nicht unterstuetzt)
+setInterval(() => {
+  const cur = player.current;
+  if (!cur || cur.kind === 'live' || video.paused || cur.blackHandled) return;
+  if (video.currentTime > 4 && video.videoWidth === 0 && !(cur.probe && !cur.probe.video)) {
+    if (cur.mode !== 'compat' && compat.status && compat.status.available) {
+      cur.blackHandled = true;
+      slotNote('Kein Bild – wechsle in den Kompatibilitätsmodus ...');
+      startCompat(cur, curPos());
+    } else if (cur.mode === 'compat' && cur.vmode !== 'x264') {
+      cur.blackHandled = true;
+      cur.forceX264 = true;
+      slotNote('Kein Bild – Bild wird jetzt umgerechnet ...');
+      startCompat(cur, curPos());
+    } else if (cur.mode !== 'compat') {
+      cur.blackHandled = true;
+      fileFailed(cur, 'Ton läuft, aber das Bildformat kann der Browser nicht darstellen');
+    }
+  }
 }, 2000);
 
 video.addEventListener('playing', () => slotNote(''));
@@ -2446,10 +2479,7 @@ video.addEventListener('playing', () => slotNote(''));
 function onPlaybackError(live) {
   const cur = player.current;
   if (!cur) return;
-  if (!live && video.error && video.error.code === 4) {
-    setMsg('Datei kann im Browser nicht abgespielt werden (z. B. MKV mit nicht unterstütztem Ton). „Link kopieren“ und in VLC öffnen.');
-    return;
-  }
+  if (!live) { fileError(cur); return; }
   if (live && !player.triedFallback && !player.attempts) {
     player.triedFallback = true;
     const other = state.liveFormat === 'm3u8' ? 'ts' : 'm3u8';
@@ -2467,6 +2497,7 @@ function setupHead(title, sub, kind, item) {
   role('sub').textContent = sub || '';
   const live = kind === 'live';
   for (const r of ['prev', 'next', 'format', 'last']) role(r).classList.toggle('hidden', !live);
+  for (const r of ['vlc', 'compat']) { const b = role(r); if (b) b.classList.toggle('hidden', live); }
   role('quality').classList.add('hidden');
   const fav = role('fav');
   fav.classList.toggle('hidden', !item);
@@ -2520,11 +2551,13 @@ function playMovie(it, sub, fromStart, retry) {
   updateProg('vod', id, { item: plainItem(it), hide: false });
   saveProgress();
   const url = streamUrl('vod', id, ext);
-  startEngine(url, ext, false, { kind: 'vod', id, item: it, url, restart: () => playMovie(it, sub, false, true) });
   mountPlayer($('#playerBox'));
   openOverlay('player');
   setupHead(it.name, sub || '', 'vod', it);
   role('epg').replaceChildren();
+  const cur = { kind: 'vod', id, item: it, url, ext, offset: 0 };
+  cur.restart = () => playMovie(it, sub, false, true);
+  startFile(cur);
 }
 
 function playEpisode(series, flat, idx, retry) {
@@ -2536,17 +2569,190 @@ function playEpisode(series, flat, idx, retry) {
   state.seriesProg[series.series_id] = { series, ep: epShort, next, t: Date.now() };
   saveProgress();
   const url = streamUrl('series', e.id, e.ext);
-  startEngine(url, e.ext, false, { kind: 'episode', id: e.id, item: null, url, series, flat, idx, restart: () => playEpisode(series, flat, idx, true) });
   mountPlayer($('#playerBox'));
   openOverlay('player');
   setupHead(series.name, `${epLabel(e)}${e.title ? ' · ' + e.title : ''}`, 'episode', null);
   role('epg').replaceChildren();
+  const cur = { kind: 'episode', id: e.id, item: null, url, ext: e.ext, series, flat, idx, offset: 0 };
+  cur.restart = () => playEpisode(series, flat, idx, true);
+  startFile(cur);
+}
+
+/* ---------- Kompatibilitaetsmodus (Umwandlung ueber ffmpeg im lokalen Server) ---------- */
+
+const compat = { status: null };
+const COMPAT_EXT = ['mkv', 'avi', 'wmv', 'flv', 'mpg', 'mpeg', 'm2ts', 'ts', 'divx', 'xvid', 'vob', '3gp', 'webm'];
+
+async function ffStatus() {
+  if (!compat.status) {
+    try { compat.status = await localApi('GET', '/transcode/status'); } catch { compat.status = { available: false }; }
+  }
+  return compat.status;
+}
+
+function curPos() {
+  const cur = player.current;
+  return (cur && cur.mode === 'compat' ? cur.offset || 0 : 0) + (video.currentTime || 0);
+}
+
+function curDur() {
+  const cur = player.current;
+  if (cur && cur.mode === 'compat') return cur.duration || 0;
+  return isFinite(video.duration) ? video.duration : 0;
+}
+
+function savedPos(cur) {
+  const p = getProg(cur.kind, cur.id);
+  return p && !p.done && p.pos > 30 ? p.pos : 0;
+}
+
+const hevcSupported = () => !!(window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L93.B0"'));
+
+function pickAudio(list) {
+  if (!list || !list.length) return -1;
+  const de = list.find((a) => /^(ger|deu|de)$/i.test(a.lang));
+  return (de || list[0]).index;
+}
+
+async function startFile(cur, opts = {}) {
+  const ff = await ffStatus();
+  const ext = String(cur.ext || '').toLowerCase();
+  const auto = ff.available && (COMPAT_EXT.includes(ext) || store('compatAlways'));
+  if (!opts.direct && (opts.compat || auto) && ff.available) return startCompat(cur, opts.start != null ? opts.start : savedPos(cur));
+  cur.mode = 'direct';
+  startEngine(cur.url, ext, false, cur);
+  updateCompatButton(cur);
+}
+
+async function startCompat(cur, start) {
+  cur.mode = 'compat';
+  updateCompatButton(cur);
+  if (!cur.probe) {
+    stopPlayer();
+    player.current = cur;
+    setMsg('Kompatibilitätsmodus: Datei wird geprüft ...');
+    try {
+      cur.probe = await localApi('GET', '/transcode/probe?url=' + encodeURIComponent(cur.url));
+    } catch (err) {
+      cur.probe = { error: err.message };
+    }
+    if (player.current !== cur) return;
+    if (cur.probe.error) {
+      const err = cur.probe.error;
+      cur.probe = null;
+      fileFailed(cur, 'Datei nicht lesbar: ' + err);
+      return;
+    }
+  }
+  const pr = cur.probe;
+  let v = 'x264';
+  if (!pr.video) v = 'copy';
+  else if (!cur.forceX264 && pr.video === 'h264') v = 'copy';
+  else if (!cur.forceX264 && pr.video === 'hevc' && hevcSupported()) v = 'hevc';
+  cur.vmode = v;
+  cur.duration = pr.duration || 0;
+  const a = pickAudio(pr.audio);
+  const st = Math.max(0, Math.floor(start || 0));
+  const src = `/transcode/stream?url=${encodeURIComponent(cur.url)}&start=${st}&v=${v}${a >= 0 ? '&a=' + a : ''}&t=${TOKEN}`;
+  cur.restart = () => startCompat(cur, curPos());
+  startEngine(null, 'compat', false, cur, src);
+  cur.offset = st;
+  showCompatBar(cur);
+  setMsg(`Kompatibilitätsmodus aktiv (${[pr.container, pr.video, pr.audio && pr.audio[0] && pr.audio[0].codec].filter(Boolean).join(', ')}${v === 'x264' ? '; Bild wird umgerechnet, braucht mehr Rechenleistung' : ''}).`);
+  updateCompatButton(cur);
+}
+
+function updateCompatButton(cur) {
+  const b = role('compat');
+  if (!b) return;
+  b.textContent = cur && cur.mode === 'compat' ? 'Normalmodus' : 'Kompatibilitätsmodus';
+  b.classList.toggle('active-filter', !!(cur && cur.mode === 'compat'));
+}
+
+const fmtClock = (sec) => {
+  const t = Math.max(0, Math.floor(sec));
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const ss = String(t % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+};
+
+// eigene Zeitleiste, weil der umgewandelte Datenstrom keine Gesamtlaenge kennt
+function showCompatBar(cur) {
+  const slot = role('slot');
+  if (!slot) return;
+  const pos = el('span', { class: 'cb-time' }, fmtClock(cur.offset));
+  const dur = el('span', { class: 'cb-time' }, cur.duration ? fmtClock(cur.duration) : '--:--');
+  const range = el('input', { type: 'range', min: 0, max: Math.max(1, Math.floor(cur.duration || 1)), step: 1, value: cur.offset, disabled: !cur.duration });
+  let dragging = false;
+  range.addEventListener('input', () => { dragging = true; pos.textContent = fmtClock(range.value); });
+  range.addEventListener('change', () => { dragging = false; startCompat(cur, Number(range.value)); });
+  const back = el('button', { class: 'btn small', title: '30 Sekunden zurück', onclick: () => startCompat(cur, Math.max(0, curPos() - 30)) }, '−30 s');
+  const fwd = el('button', { class: 'btn small', title: '30 Sekunden vor', onclick: () => startCompat(cur, curPos() + 30) }, '+30 s');
+  const bar = el('div', { class: 'cbar' }, back, pos, range, dur, fwd);
+  bar._update = () => {
+    if (dragging || player.current !== cur) return;
+    range.value = Math.floor(curPos());
+    pos.textContent = fmtClock(curPos());
+  };
+  slot.append(bar);
+}
+
+async function fileError(cur) {
+  const ff = await ffStatus();
+  if (player.current !== cur) return;
+  const code = video.error ? video.error.code : 0;
+  if (cur.mode !== 'compat') {
+    if (ff.available && !cur.triedCompat) {
+      cur.triedCompat = true;
+      slotNote('Format nicht abspielbar – wechsle in den Kompatibilitätsmodus ...');
+      startCompat(cur, Math.max(curPos(), savedPos(cur)));
+      return;
+    }
+    if (code === 2) { scheduleReconnect('Verbindung unterbrochen'); return; }
+    fileFailed(cur);
+    return;
+  }
+  // im Kompatibilitaetsmodus: erst Bild umrechnen, dann neu verbinden
+  if (cur.vmode !== 'x264' && !cur.forceX264) {
+    cur.forceX264 = true;
+    startCompat(cur, curPos());
+    return;
+  }
+  scheduleReconnect('Verbindung unterbrochen');
+}
+
+async function fileFailed(cur, extra) {
+  let diag = extra || '';
+  if (!diag) {
+    try {
+      const r = await fetch(proxied(cur.url), { headers: { Range: 'bytes=0-1' } });
+      diag = r.ok ? `Format ${String(cur.ext || '?').toUpperCase()}${r.headers.get('content-type') ? ', ' + r.headers.get('content-type') : ''}` : `Anbieter meldet Fehler ${r.status}`;
+      if (r.body) r.body.cancel().catch(() => {});
+    } catch { /* ohne Zusatzinfo */ }
+  }
+  if (player.current !== cur) return;
+  const ff = compat.status || {};
+  setMsg(`Datei kann im Browser nicht abgespielt werden${diag ? ' (' + diag + ')' : ''}. `
+    + (ff.available ? '' : 'Abhilfe: ffmpeg installieren (Datei „ffmpeg-installieren“ im App-Ordner, danach App neu starten) oder ')
+    + 'in VLC öffnen.', { label: 'In VLC öffnen', fn: () => openInVlc(cur) });
+}
+
+async function openInVlc(cur) {
+  const url = cur.url;
+  closeOverlay('player'); // Verbindung freigeben (viele Zugaenge erlauben nur eine gleichzeitig)
+  try {
+    await localApi('GET', '/transcode/vlc?url=' + encodeURIComponent(url));
+    toast('VLC wird geöffnet');
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 // beim Start an gespeicherter Stelle fortsetzen
 video.addEventListener('loadedmetadata', () => {
   const cur = player.current;
-  if (!cur || cur.kind === 'live') return;
+  if (!cur || cur.kind === 'live' || cur.mode === 'compat') return;
   const p = getProg(cur.kind, cur.id);
   if (p && !p.done && p.pos > 30 && (!isFinite(video.duration) || p.pos < video.duration - 30)) {
     video.currentTime = p.pos;
@@ -2557,13 +2763,14 @@ video.addEventListener('loadedmetadata', () => {
 function saveCurrentPos() {
   const cur = player.current;
   if (!cur || cur.kind === 'live' || !video.currentTime) return;
-  const dur = isFinite(video.duration) ? Math.floor(video.duration) : 0;
-  updateProg(cur.kind, cur.id, { pos: Math.floor(video.currentTime), dur });
+  updateProg(cur.kind, cur.id, { pos: Math.floor(curPos()), dur: Math.floor(curDur()) });
   if (cur.kind === 'episode' && state.seriesProg[cur.series.series_id]) state.seriesProg[cur.series.series_id].t = Date.now();
   saveProgress();
 }
 
 video.addEventListener('timeupdate', () => {
+  const cb = document.querySelector('.cbar');
+  if (cb && cb._update) cb._update();
   const now = Date.now();
   if (now - player.saveTimer < 5000) return;
   player.saveTimer = now;
@@ -2574,7 +2781,7 @@ video.addEventListener('pause', saveCurrentPos);
 video.addEventListener('ended', () => {
   const cur = player.current;
   if (!cur || cur.kind === 'live') return;
-  const dur = isFinite(video.duration) ? Math.floor(video.duration) : 0;
+  const dur = Math.floor(curDur()) || Math.floor(curPos());
   updateProg(cur.kind, cur.id, { pos: dur, dur, done: true });
   saveProgress();
   if (cur.kind === 'episode' && cur.flat[cur.idx + 1]) {
@@ -2679,6 +2886,12 @@ for (const box of [$('#preview'), $('#playerBox')]) {
         if (cur.item) b.classList.toggle('on', toggleFav(cur.kind === 'live' ? 'live' : 'vod', cur.item));
         break;
       case 'last': jumpBack(); break;
+      case 'vlc': openInVlc(cur); break;
+      case 'compat':
+        if (cur.kind === 'live') break;
+        if (cur.mode === 'compat') { const at = curPos(); stopPlayer(); player.current = cur; updateProg(cur.kind, cur.id, { pos: Math.floor(at) }); startFile(cur, { direct: true }); }
+        else startCompat(cur, curPos() || savedPos(cur));
+        break;
       case 'format':
         state.liveFormat = state.liveFormat === 'm3u8' ? 'ts' : 'm3u8';
         store('liveFormat:' + accountKey(), state.liveFormat);
