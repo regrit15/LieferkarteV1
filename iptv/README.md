@@ -14,6 +14,12 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
 - Länderfilter: erkennt Kennungen wie „FR |“, „[AR]“, „TR:“, „ARABIC“ und blendet sie aus;
   Schnellwahl „Nur Deutsch“; einzelne Kategorien per „ausblenden“ in der linken Liste
 - Sport-Kategorien werden automatisch erkannt und oben angezeigt
+- Automatisch neu verbinden: steht das Bild über 12 Sekunden oder bricht der Stream ab, verbindet die App
+  selbst neu (bis zu 5 Versuche, Filme/Folgen laufen an derselben Stelle weiter)
+- „Letzter Sender“ (Knopf oder Taste Z) springt zwischen den zwei zuletzt gesehenen Sendern;
+  Liste „Zuletzt gesehen“ oben in Live TV
+- Doppelte Sender (SD/HD/Full HD/4K) werden zusammengefasst; bevorzugte Qualität im Länderfilter
+  einstellbar, im Player per Auswahl wechselbar
 - Favoriten für Sender, Filme und Serien
 - Fortschritt: Filme und Folgen setzen an der gestoppten Stelle fort; ab 90 % gelten sie als gesehen
   (grüner Haken), angefangene zeigen einen Balken mit Restzeit; Folgen und Filme lassen sich auch
@@ -21,7 +27,7 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
 - Bereich „Weiter ansehen“: angefangene Filme und je Serie die angefangene bzw. nächste Folge
 - Nach dem Ende einer Folge startet die nächste automatisch (10 Sekunden, abbrechbar)
 - Abgleich zwischen Mac und PC über Google Drive (Fortschritt, Weiter ansehen, Favoriten, Filter)
-- Tasten: Pfeil hoch/runter = Sender wechseln, F = Vollbild, Esc = schließen, / = Suche
+- Tasten: Pfeil hoch/runter = Sender wechseln, Z = letzter Sender, F = Vollbild, Esc = schließen, / = Suche
 
 ## Einmalige Einrichtung
 

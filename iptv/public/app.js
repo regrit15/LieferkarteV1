@@ -143,6 +143,10 @@ const PAGE = 120;
 const KINDS = ['live', 'vod', 'series'];
 const KIND_LABEL = { live: 'Sender', vod: 'Filme', series: 'Serien' };
 
+state.recent = { list: [], t: 0 };
+state.dupHidden = new Set();
+state.variants = new Map();
+
 const accountKey = () => (state.creds ? state.creds.server + '|' + state.creds.username : '');
 
 /* ================= Xtream-API ================= */
@@ -194,7 +198,12 @@ function loadKind(kind) {
       it._tag = detectTag(it.name, true);
     }
     const sportIds = new Set(catList.filter((c) => SPORT_RE.test(c.category_name)).map((c) => c.category_id));
-    state.data[kind] = { cats: catList, catById, items: itemList, sportIds };
+    if (kind === 'live') {
+      for (const it of itemList) { it._dk = dupKey(it); it._q = qualityOf(it.name); }
+    }
+    const byId = new Map(itemList.map((it) => [itemId(kind, it), it]));
+    state.data[kind] = { cats: catList, catById, items: itemList, sportIds, byId };
+    if (kind === 'live') computeDupes();
     return state.data[kind];
   })();
   loading[kind].catch(() => { delete loading[kind]; });
@@ -205,7 +214,10 @@ function loadKind(kind) {
 
 function loadFilter() {
   const f = store('filter:' + accountKey()) || {};
-  state.filter = { tags: f.tags || [], cats: { live: [], vod: [], series: [], ...(f.cats || {}) }, t: f.t || 0 };
+  state.filter = {
+    tags: f.tags || [], cats: { live: [], vod: [], series: [], ...(f.cats || {}) }, t: f.t || 0,
+    dedupe: f.dedupe !== false, quality: f.quality || 'fhd',
+  };
 }
 function saveFilter(touch = true) {
   if (touch) state.filter.t = Date.now();
@@ -219,9 +231,72 @@ function catVisible(kind, catId) {
   return !(c && c._tag && state.filter.tags.includes(c._tag));
 }
 
-function itemVisible(kind, it) {
+function baseVisible(kind, it) {
   if (!catVisible(kind, it.category_id)) return false;
   return !(it._tag && state.filter.tags.includes(it._tag));
+}
+
+function itemVisible(kind, it) {
+  if (!baseVisible(kind, it)) return false;
+  return !(kind === 'live' && state.filter.dedupe && state.dupHidden.has(String(it.stream_id)));
+}
+
+/* ---------- Doppelte Sender (SD/HD/FHD/4K) ---------- */
+
+const QUALITY = [
+  [/\b(uhd|4k|2160p?)\b/, 4, '4K'],
+  [/\b(fhd|1080[pi]?)\b/, 3, 'Full HD'],
+  [/\b(hd|720p?)\b/, 2, 'HD'],
+  [/\b(sd|576[pi]?|480[pi]?)\b/, 0, 'SD'],
+];
+const PREFER = {
+  fhd: [3, 2, 1, 4, 0],
+  best: [4, 3, 2, 1, 0],
+  hd: [2, 1, 3, 0, 4],
+  sd: [0, 1, 2, 3, 4],
+};
+const Q_WORDS = /\b(uhd|4k|2160p?|fhd|1080[pi]?|hd|720p?|sd|576[pi]?|480[pi]?|hevc|h ?26[45]|x26[45]|26[45]|50 ?fps|60 ?fps|fps|raw|backup|vip|hdr|multi|audio|de|ger|deu)\b/g;
+
+function superscriptFix(s) {
+  return String(s || '').replace(/ᵁᴴᴰ/g, ' uhd ').replace(/ᶠᴴᴰ/g, ' fhd ').replace(/ᴴᴰ/g, ' hd ').replace(/ˢᴰ/g, ' sd ').replace(/⁴ᴷ/g, ' 4k ');
+}
+
+function qualityOf(name) {
+  const n = norm(superscriptFix(name));
+  for (const [re, rank, label] of QUALITY) if (re.test(n)) return { rank, label };
+  return { rank: 1, label: 'Standard' };
+}
+
+function dupKey(it) {
+  // Laenderkennung am Anfang entfernen, Qualitaetsangaben entfernen
+  let n = superscriptFix(it.name).replace(/\+/g, ' plus ').replace(/^[^A-Za-z0-9]*[A-Za-z]{2,4}(?:-[A-Za-z]{2})?\s*(?:[|:\]\)\-–»•]|\s\|)\s*/, '');
+  n = norm(n).replace(Q_WORDS, ' ').replace(/\s+/g, ' ').trim();
+  return n ? (it._tag || '') + '|' + n : '';
+}
+
+function computeDupes() {
+  state.dupHidden = new Set();
+  state.variants = new Map();
+  const d = state.data.live;
+  if (!d) return;
+  const groups = new Map();
+  for (const it of d.items) {
+    if (!it._dk || !baseVisible('live', it)) continue;
+    let g = groups.get(it._dk);
+    if (!g) groups.set(it._dk, (g = []));
+    g.push(it);
+  }
+  const order = PREFER[state.filter.quality] || PREFER.fhd;
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    const sorted = [...g].sort((a, b) => order.indexOf(a._q.rank) - order.indexOf(b._q.rank));
+    const best = sorted[0];
+    const byQuality = [...g].sort((a, b) => b._q.rank - a._q.rank);
+    for (const it of g) {
+      state.variants.set(String(it.stream_id), byQuality);
+      if (it !== best) state.dupHidden.add(String(it.stream_id));
+    }
+  }
 }
 
 function hiddenCount() {
@@ -237,6 +312,7 @@ function updateFilterButton() {
 
 function filterChanged() {
   saveFilter(true);
+  computeDupes();
   updateFilterButton();
   if (state.tab !== 'fav') {
     const d = state.data[state.tab];
@@ -320,10 +396,28 @@ function drawFilter() {
       el('button', { class: 'btn', onclick: () => setTags(tags.filter((t) => !['DE', 'AT', 'CH', 'EN', 'UK', 'US'].includes(t))) }, 'Deutsch + Englisch'),
       el('button', { class: 'btn', onclick: () => setTags([]) }, 'Alle Länder zeigen')),
     tags.length ? grid : el('div', { class: 'empty' }, 'Keine Länderkennungen gefunden.'),
+    dupSection(),
     el('h3', { style: 'margin:22px 0 4px' }, 'Einzeln ausgeblendete Kategorien'),
     el('div', { class: 'muted' }, 'In der linken Liste mit der Maus über eine Kategorie fahren und „ausblenden“ klicken.'),
     el('div', { class: 'f-hidden' }, hiddenCats.length ? hiddenCats : el('div', { class: 'muted' }, 'Keine.')),
   );
+}
+
+function dupSection() {
+  const cb = el('input', { type: 'checkbox', checked: state.filter.dedupe });
+  cb.addEventListener('change', () => { state.filter.dedupe = cb.checked; filterChanged(); drawFilter(); });
+  const sel = el('select', { class: 'search', style: 'max-width:260px;flex:none' },
+    [['fhd', 'Full HD (empfohlen)'], ['best', 'Höchste Qualität (4K)'], ['hd', 'HD'], ['sd', 'SD (wenig Datenvolumen)']]
+      .map(([v, l]) => el('option', { value: v, selected: state.filter.quality === v }, l)));
+  sel.addEventListener('change', () => { state.filter.quality = sel.value; filterChanged(); drawFilter(); });
+  const n = state.dupHidden.size;
+  return el('div', {},
+    el('h3', { style: 'margin:22px 0 4px' }, 'Doppelte Sender'),
+    el('div', { class: 'muted' }, 'Derselbe Sender in SD, HD, Full HD und 4K wird nur einmal gezeigt. Im Player lässt sich die Qualität trotzdem wechseln.'),
+    el('div', { class: 'sync-row', style: 'align-items:center;margin-top:10px;flex-wrap:wrap' },
+      el('label', { class: 'f-item', style: 'flex:none' }, cb, el('span', {}, 'Nur eine Variante je Sender zeigen')),
+      el('span', { class: 'muted' }, 'Bevorzugt:'), sel,
+      el('span', { class: 'muted' }, state.filter.dedupe ? `${n} Varianten ausgeblendet` : `${n} Varianten vorhanden`)));
 }
 
 $('#filterBtn').addEventListener('click', openFilter);
@@ -563,7 +657,7 @@ async function syncApi(method, route, body) {
 const syncOn = () => !!(sync.status && sync.status.configured && state.creds);
 
 function localPayload() {
-  return { v: 1, t: Date.now(), prog: state.prog, seriesProg: state.seriesProg, favs: state.favs, filter: state.filter };
+  return { v: 1, t: Date.now(), prog: state.prog, seriesProg: state.seriesProg, favs: state.favs, filter: state.filter, recent: state.recent };
 }
 
 function unionById(a, b) {
@@ -598,9 +692,16 @@ function mergePayload(d) {
   }
   const rfi = d.filter;
   if (rfi && (rfi.t || 0) > (state.filter.t || 0)) {
-    state.filter = { tags: rfi.tags || [], cats: { live: [], vod: [], series: [], ...(rfi.cats || {}) }, t: rfi.t };
+    state.filter = {
+      tags: rfi.tags || [], cats: { live: [], vod: [], series: [], ...(rfi.cats || {}) }, t: rfi.t,
+      dedupe: rfi.dedupe !== false, quality: rfi.quality || 'fhd',
+    };
     changed = true;
     filterChanged = true;
+  }
+  if (d.recent && (d.recent.t || 0) > (state.recent.t || 0)) {
+    state.recent = { list: d.recent.list || [], t: d.recent.t };
+    changed = true;
   }
   return { changed, filterChanged };
 }
@@ -627,6 +728,7 @@ async function syncNow(manual) {
       store('prog:' + accountKey(), state.prog);
       store('seriesprog:' + accountKey(), state.seriesProg);
       store('favs:' + accountKey(), state.favs);
+      store('recent:' + accountKey(), state.recent);
       saveFilter(false);
       sync.applying = false;
       refreshAfterSync(filterChanged);
@@ -656,10 +758,11 @@ function schedulePush(ms) {
 }
 
 function refreshAfterSync(filterChanged) {
+  if (filterChanged) computeDupes();
   updateFilterButton();
   const overlayOpen = ['player', 'detail', 'filterDlg'].some((id) => !$('#' + id).classList.contains('hidden'));
   if (overlayOpen || state.search) return;
-  if (filterChanged || ['cont', 'fav'].includes(state.tab)) {
+  if (filterChanged || ['cont', 'fav'].includes(state.tab) || (state.tab === 'live' && state.cat === '__recent')) {
     renderSidebar();
     render();
   }
@@ -765,6 +868,7 @@ async function login(creds) {
   loadFavs();
   loadFilter();
   loadProgress();
+  state.recent = store('recent:' + accountKey()) || { list: [], t: 0 };
   initSync();
 }
 
@@ -850,7 +954,7 @@ async function switchTab(tab) {
     const d = await loadKind(tab);
     if (state.tab !== tab) return;
     const saved = store('lastCat:' + tab);
-    const okSaved = saved && (saved === '__all' || (saved === '__sport' && d.sportIds.size) || (d.catById[saved] && catVisible(tab, saved)));
+    const okSaved = saved && (saved === '__all' || (saved === '__recent' && tab === 'live') || (saved === '__sport' && d.sportIds.size) || (d.catById[saved] && catVisible(tab, saved)));
     state.cat = okSaved ? saved : d.sportIds.size ? '__sport' : '__all';
     renderSidebar();
     render();
@@ -934,6 +1038,10 @@ function renderSidebar() {
   const otherCats = visCats.filter((c) => !d.sportIds.has(c.category_id));
   const label = KIND_LABEL[kind];
 
+  if (kind === 'live') {
+    side.append(el('div', { class: 'side-group' }, 'Persönlich'));
+    side.append(catButton('__recent', 'Zuletzt gesehen', state.recent.list.length));
+  }
   if (sportCats.length) {
     side.append(el('div', { class: 'side-group' }, 'Sport'));
     side.append(catButton('__sport', 'Alle Sport-' + label, sportTotal, { sport: true }));
@@ -959,6 +1067,9 @@ function currentItems() {
   const kind = state.tab;
   const d = state.data[kind];
   const vis = d.items.filter((it) => itemVisible(kind, it));
+  if (state.cat === '__recent') {
+    return { kind, items: state.recent.list.map((r) => d.byId.get(String(r.stream_id)) || r), title: 'Zuletzt gesehen' };
+  }
   if (state.cat === '__all') return { kind, items: vis, title: 'Alle ' + KIND_LABEL[kind] };
   if (state.cat === '__sport') return { kind, items: vis.filter((it) => d.sportIds.has(it.category_id)), title: 'Alle Sport-' + KIND_LABEL[kind] };
   const cat = d.catById[state.cat];
@@ -1414,6 +1525,8 @@ const player = { hls: null, ts: null, current: null, mount: null, saveTimer: 0, 
 const role = (r) => (player.mount ? $(`[data-role="${r}"]`, player.mount) : null);
 
 function stopPlayer() {
+  clearTimeout(player.retryTimer);
+  player.retryTimer = null;
   if (player.current && player.current.kind !== 'live') { saveCurrentPos(); schedulePush(1500); }
   cancelNext();
   if (player.hls) { player.hls.destroy(); player.hls = null; }
@@ -1430,9 +1543,21 @@ function stopPlayer() {
   for (const r of ['title', 'sub', 'msg', 'epg']) $(`[data-role="${r}"]`, pv).replaceChildren();
 }
 
-function setMsg(msg) {
+function setMsg(msg, action) {
   const m = role('msg');
-  if (m) m.textContent = msg || '';
+  if (!m) return;
+  m.replaceChildren(msg || '');
+  if (action) m.append(' ', el('button', { class: 'btn small', onclick: action.fn }, action.label));
+}
+
+// Hinweis direkt im Videobild (auch im Vollbild sichtbar)
+function slotNote(text) {
+  const slot = role('slot');
+  if (!slot) return;
+  let n = $('.slot-note', slot);
+  if (!text) { if (n) n.remove(); return; }
+  if (!n) { n = el('div', { class: 'slot-note' }); slot.append(n); }
+  n.textContent = text;
 }
 
 function mountPlayer(target) {
@@ -1443,6 +1568,9 @@ function mountPlayer(target) {
 function startEngine(url, ext, live, current) {
   stopPlayer();
   player.current = current;
+  player.lastT = -1;
+  player.lastProg = Date.now();
+  player.startT = null;
   setMsg('');
   const src = proxied(url);
 
@@ -1477,28 +1605,74 @@ video.addEventListener('error', () => {
   if (player.current && video.error) onPlaybackError(player.current.kind === 'live');
 });
 
+/* ---------- Automatisch neu verbinden ---------- */
+
+const RETRY_DELAYS = [1, 2, 4, 8, 15];
+
+function scheduleReconnect(reason) {
+  const cur = player.current;
+  if (!cur || !cur.restart || player.retryTimer) return;
+  if (player.attempts >= RETRY_DELAYS.length) {
+    slotNote('');
+    setMsg(cur.kind === 'live'
+      ? 'Verbindung verloren. Sender evtl. offline oder vom Anbieter gesperrt.'
+      : 'Verbindung verloren.', { label: 'Erneut versuchen', fn: () => { player.attempts = 0; cur.restart(); } });
+    return;
+  }
+  const d = RETRY_DELAYS[player.attempts++];
+  slotNote(`${reason} – verbinde neu in ${d} s (Versuch ${player.attempts}/${RETRY_DELAYS.length})`);
+  player.retryTimer = setTimeout(() => {
+    player.retryTimer = null;
+    if (player.current === cur) cur.restart();
+  }, d * 1000);
+}
+
+// Waechter: steht das Bild laenger als 12 s, neu verbinden
+setInterval(() => {
+  const cur = player.current;
+  const now = Date.now();
+  if (!cur || video.paused || video.ended || player.retryTimer || $('#nextUp')) {
+    player.lastT = video.currentTime;
+    player.lastProg = now;
+    return;
+  }
+  if (video.currentTime !== player.lastT) {
+    player.lastT = video.currentTime;
+    player.lastProg = now;
+    if (player.startT === null) player.startT = video.currentTime;
+    if (player.attempts && video.currentTime - player.startT > 20) player.attempts = 0;
+    return;
+  }
+  if (now - player.lastProg > 12000) scheduleReconnect('Bild steht');
+}, 2000);
+
+video.addEventListener('playing', () => slotNote(''));
+
 function onPlaybackError(live) {
   const cur = player.current;
   if (!cur) return;
-  if (live && !player.triedFallback) {
+  if (!live && video.error && video.error.code === 4) {
+    setMsg('Datei kann im Browser nicht abgespielt werden (z. B. MKV mit nicht unterstütztem Ton). „Link kopieren“ und in VLC öffnen.');
+    return;
+  }
+  if (live && !player.triedFallback && !player.attempts) {
     player.triedFallback = true;
     const other = state.liveFormat === 'm3u8' ? 'ts' : 'm3u8';
     setMsg(`Stream-Fehler, versuche Format ${other.toUpperCase()} ...`);
     state.liveFormat = other;
     store('liveFormat:' + accountKey(), other);
-    setTimeout(() => { if (player.current === cur) playLive(cur.index, true); }, 500);
+    setTimeout(() => { if (player.current === cur) cur.restart(); }, 500);
     return;
   }
-  setMsg(live
-    ? 'Sender kann nicht abgespielt werden (offline oder vom Anbieter gesperrt).'
-    : 'Datei kann im Browser nicht abgespielt werden (z. B. MKV mit nicht unterstütztem Ton). „Link kopieren“ und in VLC öffnen.');
+  scheduleReconnect('Verbindung unterbrochen');
 }
 
 function setupHead(title, sub, kind, item) {
   role('title').textContent = title;
   role('sub').textContent = sub || '';
   const live = kind === 'live';
-  for (const r of ['prev', 'next', 'format']) role(r).classList.toggle('hidden', !live);
+  for (const r of ['prev', 'next', 'format', 'last']) role(r).classList.toggle('hidden', !live);
+  role('quality').classList.add('hidden');
   const fav = role('fav');
   fav.classList.toggle('hidden', !item);
   if (item) fav.classList.toggle('on', isFav(kind, itemId(kind, item)));
@@ -1508,44 +1682,65 @@ function playLive(index, retry) {
   const list = state.livePlaylist || [];
   const it = list[index];
   if (!it) return;
-  if (!retry) player.triedFallback = false;
+  if (!retry) {
+    player.triedFallback = false;
+    player.attempts = 0;
+    // fuer "Letzter Sender" merken
+    const prev = player.lastPlayedLive;
+    if (prev && String(prev.item.stream_id) !== String(it.stream_id)) player.lastLive = prev;
+    player.lastPlayedLive = { list, index, item: it };
+    addRecent(it);
+  }
   const inPreview = !$('#preview').classList.contains('hidden') && $('#player').classList.contains('hidden');
   const target = inPreview ? $('#preview') : $('#playerBox');
   const ext = state.liveFormat;
   const url = streamUrl('live', it.stream_id, ext);
-  startEngine(url, ext, true, { kind: 'live', index, item: it, url });
+  const cur = { kind: 'live', index, item: it, url, list };
+  cur.restart = () => { state.livePlaylist = list; playLive(index, true); };
+  startEngine(url, ext, true, cur);
   mountPlayer(target);
   if (!inPreview) openOverlay('player');
   setupHead(it.name, `Live · ${ext.toUpperCase()} · ${index + 1}/${list.length}`, 'live', it);
+  const lastBtn = role('last');
+  lastBtn.disabled = !player.lastLive;
+  lastBtn.title = player.lastLive ? 'Zurück zu: ' + player.lastLive.item.name + ' (Taste Z)' : 'Noch kein vorheriger Sender';
+  const vars = state.variants.get(String(it.stream_id));
+  const qs = role('quality');
+  if (vars && vars.length > 1) {
+    qs.replaceChildren(...vars.map((v) => el('option', { value: v.stream_id, selected: String(v.stream_id) === String(it.stream_id) }, v._q.label)));
+    qs.classList.remove('hidden');
+  }
   document.querySelectorAll('.row').forEach((r) => r.classList.toggle('playing', r.dataset.sid === String(it.stream_id)));
   const row = document.querySelector(`.row[data-sid="${it.stream_id}"]`);
   if (row && inPreview) row.scrollIntoView({ block: 'nearest' });
   showEpg(it, role('epg'));
 }
 
-function playMovie(it, sub, fromStart) {
+function playMovie(it, sub, fromStart, retry) {
+  if (!retry) player.attempts = 0;
   const ext = it.container_extension || 'mp4';
   const id = String(it.stream_id);
   if (fromStart) updateProg('vod', id, { pos: 0, done: false });
   updateProg('vod', id, { item: plainItem(it), hide: false });
   saveProgress();
   const url = streamUrl('vod', id, ext);
-  startEngine(url, ext, false, { kind: 'vod', id, item: it, url });
+  startEngine(url, ext, false, { kind: 'vod', id, item: it, url, restart: () => playMovie(it, sub, false, true) });
   mountPlayer($('#playerBox'));
   openOverlay('player');
   setupHead(it.name, sub || '', 'vod', it);
   role('epg').replaceChildren();
 }
 
-function playEpisode(series, flat, idx) {
+function playEpisode(series, flat, idx, retry) {
   const e = flat[idx];
   if (!e) return;
+  if (!retry) player.attempts = 0;
   const { plot, ...epShort } = e;
   const next = flat[idx + 1] ? (({ plot: _p, ...n }) => n)(flat[idx + 1]) : null;
   state.seriesProg[series.series_id] = { series, ep: epShort, next, t: Date.now() };
   saveProgress();
   const url = streamUrl('series', e.id, e.ext);
-  startEngine(url, e.ext, false, { kind: 'episode', id: e.id, item: null, url, series, flat, idx });
+  startEngine(url, e.ext, false, { kind: 'episode', id: e.id, item: null, url, series, flat, idx, restart: () => playEpisode(series, flat, idx, true) });
   mountPlayer($('#playerBox'));
   openOverlay('player');
   setupHead(series.name, `${epLabel(e)}${e.title ? ' · ' + e.title : ''}`, 'episode', null);
@@ -1628,9 +1823,32 @@ function startNextCountdown(cur) {
 function stepChannel(delta) {
   const cur = player.current;
   if (!cur || cur.kind !== 'live') return;
-  const list = state.livePlaylist || [];
+  const list = cur.list || state.livePlaylist || [];
   if (!list.length) return;
+  state.livePlaylist = list;
   playLive((cur.index + delta + list.length) % list.length);
+}
+
+function jumpBack() {
+  const l = player.lastLive;
+  if (!l) { toast('Noch kein vorheriger Sender'); return; }
+  state.livePlaylist = l.list;
+  const i = l.list[l.index] && String(l.list[l.index].stream_id) === String(l.item.stream_id) ? l.index : l.list.indexOf(l.item);
+  if (i < 0) { state.livePlaylist = [l.item]; playLive(0); return; }
+  playLive(i);
+}
+
+function addRecent(it) {
+  const plain = plainItem(it);
+  const list = state.recent.list.filter((r) => String(r.stream_id) !== String(it.stream_id));
+  list.unshift(plain);
+  state.recent = { list: list.slice(0, 30), t: Date.now() };
+  store('recent:' + accountKey(), state.recent);
+  schedulePush(5000);
+  if (state.tab === 'live' && state.cat === '__recent') {
+    const n = document.querySelector('.cat[data-cat="__recent"] .n');
+    if (n) n.textContent = state.recent.list.length;
+  }
 }
 
 function goFullscreen() {
@@ -1640,6 +1858,19 @@ function goFullscreen() {
 
 // Knoepfe in Vorschau und grossem Player
 for (const box of [$('#preview'), $('#playerBox')]) {
+  box.addEventListener('change', (e) => {
+    const sel = e.target.closest('[data-role="quality"]');
+    const cur = player.current;
+    if (!sel || !cur || cur.kind !== 'live') return;
+    const v = (state.variants.get(String(cur.item.stream_id)) || []).find((x) => String(x.stream_id) === sel.value);
+    if (!v) return;
+    const nl = cur.list.slice();
+    nl[cur.index] = v;
+    state.livePlaylist = nl;
+    player.lastPlayedLive = null;
+    playLive(cur.index);
+    toast('Qualität: ' + v._q.label);
+  });
   box.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-role]');
     if (!b || !player.current) return;
@@ -1651,6 +1882,7 @@ for (const box of [$('#preview'), $('#playerBox')]) {
       case 'fav':
         if (cur.item) b.classList.toggle('on', toggleFav(cur.kind === 'live' ? 'live' : 'vod', cur.item));
         break;
+      case 'last': jumpBack(); break;
       case 'format':
         state.liveFormat = state.liveFormat === 'm3u8' ? 'ts' : 'm3u8';
         store('liveFormat:' + accountKey(), state.liveFormat);
@@ -1691,6 +1923,9 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'PageDown') { e.preventDefault(); stepChannel(1); }
   }
   if (player.current && e.key.toLowerCase() === 'f') goFullscreen();
+  if (e.key.toLowerCase() === 'z' || e.key === 'Backspace') {
+    if (player.lastLive) { e.preventDefault(); jumpBack(); }
+  }
 });
 
 /* ================= Start ================= */
