@@ -1,0 +1,21 @@
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1440, height: 900 } });
+  const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+  await p.goto('http://localhost:8080');
+  const f = p.locator('#loginForm');
+  await f.locator('[name=server]').fill('localhost:9000'); await f.locator('[name=username]').fill('max'); await f.locator('[name=password]').fill('geheim');
+  await f.locator('button').click(); await p.waitForSelector('.tiles .tile');
+  await p.click('.rail [data-tab=vod]'); await p.waitForSelector('.main .card');
+  console.log('Ohne Schluessel, Top-Kategorie sichtbar:', await p.locator('.cat[data-cat="__top"]').count());
+  console.log('Sterne vom Anbieter auf Postern:', (await p.locator('.main .card .meta').allTextContents()).filter((t) => t.includes('★')).length);
+  await p.click('#imdbBtn'); await p.fill('#imdbBody input', 'testkey'); await p.click('#imdbBody .btn.primary');
+  await p.waitForFunction(() => !imdbBg.running && imdbBg.done > 0, null, { timeout: 30000 });
+  console.log('Im Hintergrund abgefragt:', await p.evaluate(() => imdbBg.done));
+  await p.click('.cat[data-cat="__top"]'); await p.waitForTimeout(400);
+  console.log('Top bewertet (IMDb):', await p.locator('.main .card').evaluateAll((cs) => cs.map((c) => c.querySelector('.title').textContent + ' ' + ((c.querySelector('.imdb') || {}).textContent || '-'))));
+  await p.click('[data-tab=series]'); await p.waitForSelector('.main .card'); await p.click('.cat[data-cat="__top"]'); await p.waitForTimeout(400);
+  console.log('Serien Top:', await p.locator('.main .card .title').allTextContents());
+  console.log('Seitenfehler:', errs);
+  await b.close();
+})().catch((e) => { console.error('FEHLER', e.message); process.exit(1); });

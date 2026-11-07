@@ -1,0 +1,26 @@
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1440, height: 900 } });
+  const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+  await p.goto('http://localhost:8080');
+  const f = p.locator('#loginForm');
+  await f.locator('[name=server]').fill('localhost:9000'); await f.locator('[name=username]').fill('max'); await f.locator('[name=password]').fill('geheim');
+  await f.locator('button').click(); await p.waitForSelector('.tiles .tile');
+  await p.click('.rail [data-tab=vod]'); await p.waitForSelector('.main .card');
+  await p.click('.cat[data-cat="__all"]'); await p.waitForTimeout(500);
+  const titles = await p.locator('.main .card .title').allTextContents();
+  console.log('Filme:', titles.length, titles.filter((t) => t.includes('Drama')));
+  const card = p.locator('.main .card', { hasText: 'Drama Aktuell' });
+  console.log('Abzeichen:', await card.locator('.b4k, .bvar').allTextContents(), '| Bewertung:', await card.locator('.meta').textContent());
+  await card.click();
+  await p.waitForSelector('.variants');
+  console.log('Fassungen:', await p.locator('.variants .btn').allTextContents());
+  await p.locator('.variants .btn', { hasText: '4K' }).click();
+  await p.waitForFunction(() => document.querySelector('.variants .btn.primary') && document.querySelector('.variants .btn.primary').textContent.startsWith('4K'));
+  console.log('Gewaehlt:', await p.textContent('.variants .btn.primary'), '| Titel:', await p.textContent('#detailBody h2'));
+  await p.keyboard.press('Escape');
+  await p.click('#filterBtn'); await p.locator('label', { hasText: 'Nur eine Variante je Sender zeigen' }).locator('input').uncheck(); await p.keyboard.press('Escape');
+  console.log('Ohne Zusammenfassen:', (await p.locator('.main .card .title').allTextContents()).filter((t) => t.includes('Drama')));
+  console.log('Seitenfehler:', errs);
+  await b.close();
+})().catch((e) => { console.error('FEHLER', e.message); process.exit(1); });
