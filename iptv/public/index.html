@@ -88,15 +88,21 @@
             <div class="muted" data-role="sub"></div>
           </div>
           <div class="pv-actions">
-            <button class="btn small" data-role="prev" title="Vorheriger Sender (Pfeil hoch)">&#9650;</button>
-            <button class="btn small" data-role="next" title="Nächster Sender (Pfeil runter)">&#9660;</button>
-            <button class="btn small" data-role="last" title="Letzter Sender (Taste Z)">&#8644; Letzter</button>
-            <button class="btn small" data-role="full" title="Vollbild (F)">Vollbild</button>
-            <select class="btn small q-select hidden" data-role="quality" title="Qualität"></select>
-            <button class="btn small" data-role="fav">&#9733; Favorit</button>
-            <button class="btn small" data-role="format" title="Format nur für diesen Sender wechseln (TS/HLS)">Format</button>
-            <button class="btn small" data-role="opts" title="Puffer, Standardformat, Info-Anzeige (Taste I)">Wiedergabe</button>
-            <button class="btn small" data-role="copy" title="Direktlink z. B. für VLC">Link</button>
+            <button class="ibtn" data-role="prev" title="Vorheriger Sender (Pfeil hoch)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button>
+            <button class="ibtn" data-role="next" title="Nächster Sender (Pfeil runter)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+            <button class="ibtn" data-role="last" title="Letzter Sender (Taste Z)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h11l-3-3M17 17H6l3 3"/></svg></button>
+            <button class="ibtn" data-role="fav" title="Favorit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.8Z"/></svg></button>
+            <button class="ibtn" data-role="full" title="Vollbild (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+            <div class="more-wrap">
+              <button class="ibtn" data-role="more" title="Weitere Optionen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg></button>
+              <div class="menu hidden" data-role="menu">
+                <label class="menu-q hidden" data-qwrap><span>Qualität</span><select class="q-select hidden" data-role="quality" title="Qualität"></select></label>
+                <button data-role="format" title="Format nur für diesen Sender wechseln (TS/HLS)">Format wechseln (nur dieser Sender)</button>
+                <button data-role="opts" title="Puffer, Standardformat, Info-Anzeige (Taste I)">Wiedergabe-Einstellungen</button>
+                <button data-role="stats">Info-Anzeige ein/aus (Taste I)</button>
+                <button data-role="copy" title="Direktlink z. B. für VLC">Link kopieren</button>
+              </div>
+            </div>
           </div>
           <div class="player-msg" data-role="msg"></div>
           <div class="epg" data-role="epg"></div>
@@ -123,18 +129,24 @@
           <div class="muted" data-role="sub"></div>
         </div>
         <div class="player-actions">
-          <button class="btn small" data-role="prev" title="Vorheriger Sender (Pfeil hoch)">&#9650;</button>
-          <button class="btn small" data-role="next" title="Nächster Sender (Pfeil runter)">&#9660;</button>
-          <button class="btn small" data-role="last" title="Letzter Sender (Taste Z)">&#8644; Letzter</button>
-          <button class="btn small" data-role="full" title="Vollbild (F)">Vollbild</button>
-          <select class="btn small q-select hidden" data-role="quality" title="Qualität"></select>
-          <button class="btn small" data-role="fav">&#9733; Favorit</button>
-          <button class="btn small" data-role="format" title="Format nur für diesen Sender wechseln (TS/HLS)">Format</button>
-          <button class="btn small" data-role="opts" title="Puffer, Standardformat, Info-Anzeige (Taste I)">Wiedergabe</button>
-          <button class="btn small hidden" data-role="compat" title="Datei über ffmpeg umwandeln (bei schwarzem Bild oder fehlendem Ton)">Kompatibilitätsmodus</button>
-          <button class="btn small hidden" data-role="vlc" title="Film in VLC auf diesem Rechner öffnen">In VLC öffnen</button>
-          <button class="btn small" data-role="copy" title="Direktlink z. B. für VLC">Link kopieren</button>
-          <button class="btn small" data-close="player">Schließen</button>
+          <button class="ibtn" data-role="prev" title="Vorheriger Sender (Pfeil hoch)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button>
+          <button class="ibtn" data-role="next" title="Nächster Sender (Pfeil runter)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+          <button class="ibtn" data-role="last" title="Letzter Sender (Taste Z)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h11l-3-3M17 17H6l3 3"/></svg></button>
+          <button class="ibtn" data-role="fav" title="Favorit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.8Z"/></svg></button>
+          <button class="ibtn" data-role="full" title="Vollbild (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <div class="more-wrap">
+            <button class="ibtn" data-role="more" title="Weitere Optionen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg></button>
+            <div class="menu hidden" data-role="menu">
+              <label class="menu-q hidden" data-qwrap><span>Qualität</span><select class="q-select hidden" data-role="quality" title="Qualität"></select></label>
+              <button data-role="format" title="Format nur für diesen Sender wechseln (TS/HLS)">Format wechseln (nur dieser Sender)</button>
+              <button data-role="opts" title="Puffer, Standardformat, Info-Anzeige (Taste I)">Wiedergabe-Einstellungen</button>
+              <button class="hidden" data-role="compat" title="Datei über ffmpeg umwandeln (bei schwarzem Bild oder fehlendem Ton)">Kompatibilitätsmodus</button>
+              <button class="hidden" data-role="vlc" title="In VLC auf diesem Rechner öffnen">In VLC öffnen</button>
+              <button data-role="stats">Info-Anzeige ein/aus (Taste I)</button>
+              <button data-role="copy" title="Direktlink z. B. für VLC">Link kopieren</button>
+            </div>
+          </div>
+          <button class="ibtn" data-close="player" title="Schließen (Esc)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
         </div>
       </div>
       <div class="video-slot big" data-role="slot"></div>

@@ -1682,6 +1682,64 @@ function catButton(id, name, count, opts = {}) {
 }
 
 function renderSidebar() {
+  renderSidebarInner();
+  groupSidebar();
+}
+
+// Gruppen in der Seitenleiste ein-/ausklappbar machen (Zustand merken), bei vielen Kategorien Suchfeld
+function groupSidebar() {
+  const side = $('#sidebar');
+  const key = 'sgCollapsed:' + state.tab;
+  let collapsed = store(key);
+  if (!Array.isArray(collapsed)) collapsed = ['Weiterer Sport'];
+  const kids = [...side.children];
+  if (!kids.some((k) => k.classList.contains('side-group'))) return;
+  side.replaceChildren();
+  let body = null;
+  for (const k of kids) {
+    if (k.classList.contains('side-group')) {
+      const name = k.textContent;
+      body = el('div', { class: 'sg-body' });
+      const head = el('button', { class: 'sg-head', 'aria-expanded': 'true' }, el('span', {}, name), el('span', { class: 'chev' }, '\u203A'));
+      const b = body;
+      const apply = (isCollapsed) => {
+        b.classList.toggle('hidden', isCollapsed);
+        head.classList.toggle('collapsed', isCollapsed);
+        head.setAttribute('aria-expanded', String(!isCollapsed));
+      };
+      head.addEventListener('click', () => {
+        const now = !b.classList.contains('hidden');
+        apply(now);
+        const list = (store(key) || ['Weiterer Sport']).filter((x) => x !== name);
+        if (now) list.push(name);
+        store(key, list);
+      });
+      side.append(head, body);
+      body._apply = apply;
+      body._name = name;
+    } else if (body) body.append(k);
+    else side.append(k);
+  }
+  side.querySelectorAll('.sg-body').forEach((b) => {
+    const hasActive = !!b.querySelector('.cat.active');
+    b._apply(collapsed.includes(b._name) && !hasActive);
+  });
+  const cats = side.querySelectorAll('.cat');
+  if (cats.length > 15) {
+    const input = el('input', { class: 'side-search', type: 'search', placeholder: 'Kategorie suchen ...' });
+    input.addEventListener('input', () => {
+      const q = norm(input.value);
+      side.querySelectorAll('.cat').forEach((c) => {
+        const w = c.closest('.cat-wrap') || c;
+        w.classList.toggle('hidden', !!q && !norm(c.textContent).includes(q));
+      });
+      side.querySelectorAll('.sg-body').forEach((b) => { if (q) b.classList.remove('hidden'); else b._apply(collapsed.includes(b._name) && !b.querySelector('.cat.active')); });
+    });
+    side.prepend(input);
+  }
+}
+
+function renderSidebarInner() {
   const side = $('#sidebar');
   side.replaceChildren();
 
@@ -2346,13 +2404,24 @@ async function showEpg(it, box) {
   const now = Date.now() / 1000;
   const rows = list.filter((e) => !e.stop || e.stop > now);
   if (!rows.length) { box.append(el('div', { class: 'muted' }, 'Kein Programm verfügbar.')); return; }
-  box.replaceChildren(...rows.map((e) => {
+  box.replaceChildren(...rows.map((e, i) => {
     const upcoming = e.start > now;
-    return el('div', { class: 'epg-item' + (e.start <= now && e.stop > now ? ' now' : '') },
+    const running = e.start <= now && e.stop > now;
+    if (running) {
+      const pct = Math.min(100, ((now - e.start) / (e.stop - e.start)) * 100);
+      const rest = Math.max(1, Math.round((e.stop - now) / 60));
+      return el('div', { class: 'epg-now' },
+        el('div', { class: 'en-top' }, el('span', { class: 'en-badge' }, 'JETZT'), el('span', { class: 'muted' }, `${fmtTime(e.start)} – ${fmtTime(e.stop)}`)),
+        el('div', { class: 'en-title' }, e.title),
+        el('div', { class: 'en-bar' }, el('i', { style: `width:${pct}%` })),
+        el('div', { class: 'en-rest' }, `noch ${rest} Min.`),
+        e.desc ? el('div', { class: 'epg-desc' }, e.desc) : null);
+    }
+    return el('div', { class: 'epg-item compact' },
       upcoming && it.epg_channel_id ? bellButton({ ch: it.epg_channel_id, sid: it.stream_id, name: it.name, title: e.title, s: e.start, e: e.stop }) : null,
-      el('span', { class: 'epg-time' }, e.start ? `${fmtDay(e.start)} - ${fmtTime(e.stop)}` : ''),
-      el('strong', {}, e.title),
-      e.desc ? el('div', { class: 'epg-desc' }, e.desc) : null);
+      i === 1 || (i === 0 && upcoming) ? el('div', { class: 'en-next' }, 'DANACH') : null,
+      el('span', { class: 'epg-time' }, e.start ? fmtDay(e.start) : ''),
+      el('strong', {}, e.title));
   }));
 }
 
@@ -2921,6 +2990,8 @@ function playLive(index, retry) {
     qs.replaceChildren(...vars.map((v) => el('option', { value: v.stream_id, selected: String(v.stream_id) === String(it.stream_id) }, v._q.label)));
     qs.classList.remove('hidden');
   }
+  const qw = qs.closest('[data-qwrap]');
+  if (qw) qw.classList.toggle('hidden', qs.classList.contains('hidden'));
   document.querySelectorAll('.row').forEach((r) => r.classList.toggle('playing', r.dataset.sid === String(it.stream_id)));
   const row = document.querySelector(`.row[data-sid="${it.stream_id}"]`);
   if (row && inPreview) row.scrollIntoView({ block: 'nearest' });
@@ -3245,6 +3316,16 @@ function goFullscreen() {
 }
 
 // Knoepfe in Vorschau und grossem Player
+// Menue "…" (weitere Optionen)
+document.addEventListener('click', (e) => {
+  const more = e.target.closest('[data-role="more"]');
+  document.querySelectorAll('[data-role="menu"]').forEach((m) => {
+    const own = more && m.parentElement.contains(more);
+    if (own) m.classList.toggle('hidden');
+    else if (!m.contains(e.target) || e.target.closest('button')) m.classList.add('hidden');
+  });
+});
+
 for (const box of [$('#preview'), $('#playerBox')]) {
   box.addEventListener('change', (e) => {
     const sel = e.target.closest('[data-role="quality"]');
@@ -3271,6 +3352,7 @@ for (const box of [$('#preview'), $('#playerBox')]) {
         if (cur.item) b.classList.toggle('on', toggleFav(cur.kind === 'live' ? 'live' : 'vod', cur.item));
         break;
       case 'last': jumpBack(); break;
+      case 'stats': state.playback.stats = !state.playback.stats; savePlayback(); break;
       case 'vlc': openInVlc(cur); break;
       case 'compat':
         if (cur.kind === 'live') break;
