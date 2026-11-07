@@ -715,3 +715,10 @@ body { font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Rob
 .hero h1 { font-size: clamp(40px, 4.6vw, 72px); }
 .hero-plot { font-size: clamp(15px, 1.15vw, 18px); }
 @media (max-width: 1500px) { #accountInfo { display: none; } }
+
+.bvar {
+  position: absolute; right: 8px; bottom: 8px; z-index: 1; padding: 2px 7px; border-radius: 6px;
+  font-size: 11px; font-weight: 600; color: #fff; background: rgba(10, 14, 23, .78); border: 1px solid rgba(255,255,255,.22);
+}
+.variants { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+.variants .btn { font-size: 12.5px; }

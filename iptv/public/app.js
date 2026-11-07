@@ -85,6 +85,9 @@ const SUP = {
   'ᴼ': 'O', 'ᴾ': 'P', 'ᴿ': 'R', 'ᵀ': 'T', 'ᵁ': 'U', 'ⱽ': 'V', 'ᵂ': 'W', 'ᵃ': 'a', 'ᵇ': 'b', 'ᶜ': 'c', 'ᵈ': 'd', 'ᵉ': 'e',
   'ᶠ': 'F', 'ᵍ': 'g', 'ʰ': 'h', 'ⁱ': 'i', 'ʲ': 'j', 'ᵏ': 'k', 'ˡ': 'l', 'ᵐ': 'm', 'ⁿ': 'n', 'ᵒ': 'o', 'ᵖ': 'p', 'ʳ': 'r',
   'ˢ': 'S', 'ᵗ': 't', 'ᵘ': 'u', 'ᵛ': 'v', 'ʷ': 'w', 'ˣ': 'x', 'ʸ': 'y', 'ᶻ': 'z', 'ꜰ': 'F', 'ʜ': 'H', 'ᴅ': 'D', 'ᴋ': 'K', 'ᴘ': 'P',
+  'ᶦ': 'I', 'ᶧ': 'I', 'ᵎ': 'I', 'ᶥ': 'I', 'ᶫ': 'L', 'ᶰ': 'N', 'ᶸ': 'U', 'ᴲ': 'E', 'ᴻ': 'N', 'ᴭ': 'AE', 'ᶛ': 'A', 'ᵊ': 'E',
+  'ᵅ': 'A', 'ᵋ': 'E', 'ᶿ': 'TH', 'ᵝ': 'B', 'ᵞ': 'G', 'ᵟ': 'D', 'ᵠ': 'PH', 'ᵡ': 'X', 'ꟹ': 'OE', 'ʶ': 'R', 'ᶤ': 'I', 'ᶨ': 'J', 'ᶬ': 'M',
+  'ᶮ': 'N', 'ᶯ': 'N', 'ᶴ': 'SH', 'ᶹ': 'V', 'ᶺ': 'V', 'ᶼ': 'Z', 'ᶽ': 'Z', 'ᶾ': 'ZH', 'ᴯ': 'B', 'ᴬ̲': 'A',
   '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁺': '+',
 };
 const SUP_RE = new RegExp('[' + Object.keys(SUP).join('') + ']+', 'g');
@@ -125,7 +128,8 @@ function displayName(name) {
     n = n.replace(/^([A-Za-z]{2,3})\s*:\s*/, (m, c) => (TAG_LABELS[(TAG_ALIAS[c.toUpperCase()] || c.toUpperCase())] ? '' : m));
     if (n === before) break;
   }
-  for (let i = 0; i < 3; i++) n = n.replace(/\s*[([]\s*(?:(?:19|20)\d{2}|[A-Z]{2,3})\s*[)\]]\s*$/, '');
+  const TAIL = /\s*[([]\s*(?:(?:19|20)\d{2}|[A-Z]{2,3}|multi[- ]?subs?|subs?|dubbed|dub|omu|omdu|ov|ger(?:man)?|deu(?:tsch)?|eng(?:lish)?|uncut|extended|4k|uhd|hd|fhd|hdr|dv)\s*[)\]]\s*$/i;
+  for (let i = 0; i < 5; i++) n = n.replace(TAIL, '');
   n = n.trim();
   return n || String(name || '');
 }
@@ -307,11 +311,12 @@ function loadKind(kind) {
       for (const it of itemList) {
         it._year = yearOf(it);
         it._added = Number(it.added || it.last_modified) || 0;
+        it._gk = norm(displayName(it.name)) + '|' + (it._year || '');
       }
     }
     const byId = new Map(itemList.map((it) => [itemId(kind, it), it]));
     state.data[kind] = { cats: catList, catById, items: itemList, sportIds, focusIds, byId };
-    if (kind === 'live') computeDupes();
+    computeDupes();
     return state.data[kind];
   })();
   loading[kind].catch(() => { delete loading[kind]; });
@@ -346,7 +351,61 @@ function baseVisible(kind, it) {
 
 function itemVisible(kind, it) {
   if (!baseVisible(kind, it)) return false;
-  return !(kind === 'live' && state.filter.dedupe && state.dupHidden.has(String(it.stream_id)));
+  if (!state.filter.dedupe) return true;
+  if (kind === 'live') return !state.dupHidden.has(String(it.stream_id));
+  const h = state.titleHidden && state.titleHidden[kind];
+  return !(h && h.has(itemId(kind, it)));
+}
+
+// Filme/Serien: gleicher Titel (+ Jahr) = eine Karte; bevorzugt deutsche Fassung, nicht 4K (ausser "Hoechste Qualitaet")
+function computeTitleDupes() {
+  state.titleHidden = { vod: new Set(), series: new Set() };
+  state.titleVariants = { vod: new Map(), series: new Map() };
+  const want4k = state.filter.quality === 'best';
+  for (const kind of ['vod', 'series']) {
+    const d = state.data[kind];
+    if (!d) continue;
+    const groups = new Map();
+    for (const it of d.items) {
+      if (!it._gk || !baseVisible(kind, it)) continue;
+      let g = groups.get(it._gk);
+      if (!g) groups.set(it._gk, (g = []));
+      g.push(it);
+    }
+    const pic = (it) => (/^https?:/i.test((kind === 'series' ? it.cover : it.stream_icon) || '') ? 1 : 0);
+    const score = (it) => (it._tag === 'DE' || /^\W*DE\b/i.test(it.name) ? 4 : 0) + (it._tag && it._tag !== 'DE' ? -2 : 0)
+      + (it._4k ? (want4k ? 2 : -1) : 0) + pic(it);
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      const sorted = [...g].sort((a, b) => score(b) - score(a));
+      const best = sorted[0];
+      for (const it of g) {
+        state.titleVariants[kind].set(itemId(kind, it), sorted);
+        if (it !== best) state.titleHidden[kind].add(itemId(kind, it));
+      }
+    }
+  }
+}
+
+function variantLabel(it) {
+  const parts = [];
+  parts.push(it._4k ? '4K' : 'Standard');
+  if (it._tag) parts.push(it._tag);
+  const cat = state.data.vod && state.data.vod.catById[it.category_id] || state.data.series && state.data.series.catById[it.category_id];
+  return parts.join(' · ') + (cat ? ` – ${catLabel(cat.category_name)}` : '');
+}
+
+// Auswahl der Fassung in der Detailansicht
+function variantPicker(kind, it) {
+  const vars = state.titleVariants && state.titleVariants[kind] && state.titleVariants[kind].get(itemId(kind, it));
+  if (!vars || vars.length < 2) return null;
+  return el('div', { class: 'variants' },
+    el('span', { class: 'muted' }, 'Fassung:'),
+    vars.map((v) => el('button', {
+      class: 'btn small' + (v === it ? ' primary' : ''),
+      title: v.name,
+      onclick: () => { if (v !== it) (kind === 'series' ? openSeries(v) : openMovie(v)); },
+    }, variantLabel(v))));
 }
 
 /* ---------- Doppelte Sender (SD/HD/FHD/4K) ---------- */
@@ -384,6 +443,7 @@ function dupKey(it) {
 
 function computeDupes() {
   state.guideMap = null;
+  computeTitleDupes();
   state.dupHidden = new Set();
   state.variants = new Map();
   const d = state.data.live;
@@ -1946,11 +2006,11 @@ function ratingOf(kind, it) {
   return providerRating(it);
 }
 
-// Anbieterwerte ab 9,8 stammen meist von neuen Titeln mit kaum Stimmen: ignorieren
+// Anbieterwerte ab 9,0 stammen meist von neuen Titeln mit kaum Stimmen: ignorieren
 function providerRating(it) {
   let r = Number(it.rating);
   if (!(r > 0)) r = (Number(it.rating_5based) || 0) * 2;
-  return r > 0 && r < 9.8 ? r : 0;
+  return r > 0 && r < 9 ? r : 0;
 }
 
 const fmtRating = (r) => (Number(r) || 0).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -2266,7 +2326,15 @@ function posterCard(kind, it, tokens) {
   }
   if (pi && !pi.done) meta = pi.label + (meta ? ' · ' + meta : '');
   const card = el('div', { class: 'card', title: it.name, 'data-ik': kind + ':' + itemId(kind, it), onclick: () => (kind === 'series' ? openSeries(it) : openMovie(it)) },
-    el('div', { class: 'pwrap' }, img(pic, 'poster', it.name), ...progDecor(pi), im && im.r ? imdbBadge(im) : null, it._4k ? el('span', { class: 'b4k' }, '4K') : null),
+    el('div', { class: 'pwrap' }, img(pic, 'poster', it.name), ...progDecor(pi), im && im.r ? imdbBadge(im) : null, (() => {
+      const vars = state.titleVariants && state.titleVariants[kind] && state.titleVariants[kind].get(itemId(kind, it));
+      const has4k = it._4k || (state.filter.dedupe && vars && vars.some((v) => v._4k));
+      return has4k ? el('span', { class: 'b4k' }, '4K') : null;
+    })(),
+    (() => {
+      const vars = state.filter.dedupe && state.titleVariants && state.titleVariants[kind] && state.titleVariants[kind].get(itemId(kind, it));
+      return vars && vars.length > 1 ? el('span', { class: 'bvar', title: vars.length + ' Fassungen' }, vars.length + ' Fassungen') : null;
+    })()),
     starButton(kind, it),
     el('div', { class: 'title' }, tokens ? highlight(displayName(it.name), tokens) : displayName(it.name)),
     el('div', { class: 'meta' }, meta));
@@ -2327,7 +2395,7 @@ function applyImdb(k, v) {
     const w = $('.pwrap', card);
     if (w && !$('.imdb', w)) w.append(imdbBadge(v));
     const m = $('.meta', card);
-    if (m) m.textContent = m.textContent.replace(/\s*·?\s*\u2605 [\d.]+/, '');
+    if (m) m.textContent = m.textContent.replace(/\s*·?\s*\u2605 [\d.,]+/, '');
   });
 }
 
@@ -2582,9 +2650,10 @@ async function openMovie(it) {
     el('div', { class: 'detail-top' },
       img(info.movie_image || it.stream_icon, 'poster-lg', it.name),
       el('div', {},
-        el('h2', {}, it.name),
+        el('h2', {}, displayName(it.name)),
         el('div', { class: 'muted' }, facts),
         imdbLine('vod', it, info.imdb_id || info.imdb),
+        variantPicker('vod', it),
         state1,
         el('p', {}, info.plot || info.description || ''),
         info.cast ? el('div', { class: 'muted' }, 'Mit: ' + info.cast) : null,
@@ -2682,6 +2751,7 @@ async function openSeries(it) {
         el('h2', {}, name),
         el('div', { class: 'muted' }, [info.releaseDate || info.releasedate, info.genre, providerRating(info) && '\u2605 ' + fmtRating(providerRating(info))].filter(Boolean).join(' · ')),
         imdbLine('series', it, info.imdb_id || info.imdb),
+        variantPicker('series', it),
         summary,
         el('p', {}, info.plot || it.plot || ''),
         info.cast ? el('div', { class: 'muted' }, 'Mit: ' + info.cast) : null,
