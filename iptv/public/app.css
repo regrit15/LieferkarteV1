@@ -698,3 +698,20 @@ body { font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Rob
   border: 1px solid var(--line); color: var(--text); font: inherit; font-size: 14px;
 }
 .side-search:focus { outline: none; border-color: var(--accent); }
+
+/* ---------------- Feinschliff nach Test mit echten Daten ---------------- */
+.qchip {
+  display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 5px; vertical-align: 2px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: #c9d3e6; background: #263049; border: 1px solid #34405d;
+}
+.b4k {
+  position: absolute; left: 8px; top: 8px; z-index: 1; padding: 2px 7px; border-radius: 6px;
+  font-size: 11px; font-weight: 800; letter-spacing: .05em; color: #fff; background: rgba(10, 14, 23, .78); border: 1px solid rgba(255,255,255,.25);
+}
+.tile .t-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: clamp(16px, 1.25vw, 21px); }
+.tile .t-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile { padding: 0 18px; gap: 14px; }
+.hero { min-height: min(560px, 60vh); padding-top: min(150px, 14vh); padding-bottom: 56px; }
+.hero h1 { font-size: clamp(40px, 4.6vw, 72px); }
+.hero-plot { font-size: clamp(15px, 1.15vw, 18px); }
+@media (max-width: 1500px) { #accountInfo { display: none; } }

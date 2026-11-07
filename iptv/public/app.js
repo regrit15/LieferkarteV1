@@ -79,22 +79,70 @@ const FOOTBALL_RE = /fu(ss|ß)ball|football|soccer|bundesliga|\b[23]\.?\s?liga\b
 const F1_RE = /\bf1\b|formel\s?1|formula\s?1|grand\s?prix/i;
 const isFocus = (s) => FOOTBALL_RE.test(s) || F1_RE.test(s);
 
-// Anzeigename: Laenderkennung vorne und Jahr in Klammern hinten weglassen
+// Hochgestellte Zeichen (ᴴᴰ, ⁴ᴷ, ᴿᴬᵂ ...) in normale Buchstaben umwandeln
+const SUP = {
+  'ᴬ': 'A', 'ᴮ': 'B', 'ᴰ': 'D', 'ᴱ': 'E', 'ᴳ': 'G', 'ᴴ': 'H', 'ᴵ': 'I', 'ᴶ': 'J', 'ᴷ': 'K', 'ᴸ': 'L', 'ᴹ': 'M', 'ᴺ': 'N',
+  'ᴼ': 'O', 'ᴾ': 'P', 'ᴿ': 'R', 'ᵀ': 'T', 'ᵁ': 'U', 'ⱽ': 'V', 'ᵂ': 'W', 'ᵃ': 'a', 'ᵇ': 'b', 'ᶜ': 'c', 'ᵈ': 'd', 'ᵉ': 'e',
+  'ᶠ': 'F', 'ᵍ': 'g', 'ʰ': 'h', 'ⁱ': 'i', 'ʲ': 'j', 'ᵏ': 'k', 'ˡ': 'l', 'ᵐ': 'm', 'ⁿ': 'n', 'ᵒ': 'o', 'ᵖ': 'p', 'ʳ': 'r',
+  'ˢ': 'S', 'ᵗ': 't', 'ᵘ': 'u', 'ᵛ': 'v', 'ʷ': 'w', 'ˣ': 'x', 'ʸ': 'y', 'ᶻ': 'z', 'ꜰ': 'F', 'ʜ': 'H', 'ᴅ': 'D', 'ᴋ': 'K', 'ᴘ': 'P',
+  '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁺': '+',
+};
+const SUP_RE = new RegExp('[' + Object.keys(SUP).join('') + ']+', 'g');
+const supText = (s) => String(s || '').replace(SUP_RE, (m) => ' ' + [...m].map((c) => SUP[c] || c).join('').toUpperCase() + ' ');
+const MARKS_RE = /[◉●○◎◆◇■□▪▫★☆✪✦✧•·]+/g;
+
+// Kategorienamen: hochgestellte Zeichen lesbar, Markierungen weg
+function catLabel(name) {
+  return supText(name).replace(MARKS_RE, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Sender: Name ohne Qualitaetszusaetze + Abzeichen (UHD, HD, RAW ...)
+const CHIP_WORDS = ['UHD', '4K', 'FHD', 'HD', 'SD', 'RAW', 'HDR', 'DV', 'HEVC', '50FPS', 'VIP'];
+function liveLabel(name) {
+  const raw = String(name || '');
+  const chips = [];
+  let text = raw.replace(SUP_RE, (m) => {
+    const t = [...m].map((c) => SUP[c] || c).join('').toUpperCase();
+    for (const w of t.split(/[^A-Z0-9]+/)) if (CHIP_WORDS.includes(w) && !chips.includes(w)) chips.push(w);
+    return ' ';
+  });
+  text = text.replace(MARKS_RE, ' ').replace(/\s*[/|]\s*$/, '').replace(/\s+/g, ' ').trim();
+  return { text: text || raw, chips };
+}
+
+function chipEls(chips) {
+  return chips.slice(0, 2).map((c) => el('span', { class: 'qchip' }, c));
+}
+
+// Anzeigename fuer Filme/Serien: Kennungen vorne ("DE - ", "|DE| ", "4K-TOP - ", "4K-DE-DV - ")
+// und Anhaengsel hinten ("(2026)", "(US)", "[2024]") weglassen
 function displayName(name) {
-  const n = String(name || '')
-    .replace(/^[^A-Za-z0-9\u00C0-\u024F]*[A-Za-z]{2,4}(?:-[A-Za-z]{2})?\s*(?:[|:\]\)\-–»•]|\s\|)\s*/, '')
-    .replace(/\s*[([]\s*(19|20)\d{2}\s*[)\]]\s*$/, '')
-    .trim();
+  let n = supText(name).replace(MARKS_RE, ' ').replace(/\s+/g, ' ').trim();
+  for (let i = 0; i < 3; i++) {
+    const before = n;
+    n = n.replace(/^[|[]\s*[A-Za-z]{2,3}\s*[|\]]\s*/, '');
+    n = n.replace(/^(?=[A-Z0-9+-]*[A-Z])[A-Z0-9]{2,5}(?:[-+][A-Z0-9]{2,5})*\s+[-–|»]\s+/, '');
+    n = n.replace(/^([A-Za-z]{2,3})\s*:\s*/, (m, c) => (TAG_LABELS[(TAG_ALIAS[c.toUpperCase()] || c.toUpperCase())] ? '' : m));
+    if (n === before) break;
+  }
+  for (let i = 0; i < 3; i++) n = n.replace(/\s*[([]\s*(?:(?:19|20)\d{2}|[A-Z]{2,3})\s*[)\]]\s*$/, '');
+  n = n.trim();
   return n || String(name || '');
 }
+
+const is4k = (name) => /\b(4K|UHD|2160P?)\b/i.test(supText(name));
 
 function yearOf(it) {
   for (const c of [it.year, it.releaseDate, it.releasedate, it.release_date]) {
     const m = String(c || '').match(/\b(19\d{2}|20\d{2})\b/);
     if (m) return Number(m[1]);
   }
-  const m = String(it.name || '').match(/[([\s-](19\d{2}|20\d{2})[)\]]?\s*$/);
-  return m ? Number(m[1]) : 0;
+  // Jahr im Titel nur, wenn plausibel ("Blade Runner 2049" ist kein Erscheinungsjahr)
+  const max = new Date().getFullYear() + 1;
+  const name = String(it.name || '').replace(/\s*[([]\s*[A-Z]{2,3}\s*[)\]]\s*$/, '');
+  const m = name.match(/[([](19\d{2}|20\d{2})[)\]]/) || name.match(/[\s-](19\d{2}|20\d{2})\s*$/);
+  const y = m ? Number(m[1]) : 0;
+  return y >= 1900 && y <= max ? y : 0;
 }
 
 const TAG_LABELS = {
@@ -132,8 +180,26 @@ const TAG_WORDS = [
 
 // Laenderkennung aus einem Namen wie "FR | Sport", "[AR] MBC", "TR: TRT 1", "ARABIC MOVIES".
 // prefixOnly: nur Kennung am Anfang werten (fuer Sender-/Filmnamen, damit "French Connection" nicht als FR gilt)
+const SCRIPT_TAGS = [
+  [/[\u0600-\u06FF\u0750-\u077F]/, 'AR'], [/[\u0400-\u04FF]/, 'CYR'], [/[\u0590-\u05FF]/, 'IL'],
+  [/[\u0370-\u03FF]/, 'GR'], [/[\u0E00-\u0E7F]/, 'TH'], [/[\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]/, 'ASIA'],
+];
+TAG_LABELS.CYR = 'Kyrillische Schrift';
+
 function detectTag(name, prefixOnly) {
-  const s = String(name || '');
+  const s = supText(name);
+  // fremde Schrift (z. B. arabische Kategorien ohne Kennung)
+  const letters = s.replace(/[^\p{L}]/gu, '');
+  for (const [re, code] of SCRIPT_TAGS) {
+    const hits = (letters.match(new RegExp(re.source, 'g')) || []).length;
+    if (letters && hits / letters.length > 0.3) return code;
+  }
+  // Anhaengsel hinten, z. B. "Titel (2026) (US)"
+  const tail = s.replace(/\s*[([]\s*(?:19|20)\d{2}\s*[)\]]\s*$/, '').match(/[([]\s*([A-Z]{2,3})\s*[)\]]\s*$/);
+  if (tail) {
+    const c = TAG_ALIAS[tail[1]] || tail[1];
+    if (TAG_LABELS[c] && !NOT_TAGS.has(c)) return c;
+  }
   const m = s.match(/^[^A-Za-z0-9]*([A-Za-z]{2,4}(?:-[A-Za-z]{2})?)\s*(?:[|:\]\)\-–»•]|\s\|)/);
   if (m) {
     let code = m[1].toUpperCase();
@@ -221,7 +287,8 @@ function loadKind(kind) {
     const itemList = Array.isArray(items) ? items : [];
     for (const it of itemList) {
       it.category_id = String(it.category_id);
-      it._n = norm(it.name);
+      it._n = norm(supText(it.name));
+      it._4k = kind !== 'live' && is4k(it.name);
       // weitere durchsuchbare Felder (bei Serien oft vorhanden)
       it._x = norm([it.genre, it.cast, it.director, it.plot].filter(Boolean).join(' '));
       it._tag = detectTag(it.name, true);
@@ -1373,7 +1440,7 @@ function channelCard(it) {
   const live = np && np.s <= t && np.e > t;
   return el('div', { class: 'chcard', title: it.name, onclick: () => playChannelItem(it) },
     img(it.stream_icon, 'logo', it.name),
-    el('div', { class: 'ch-name' }, it.name),
+    el('div', { class: 'ch-name' }, liveLabel(it.name).text),
     el('div', { class: 'ch-now' }, live ? [el('b', {}, '● Live'), ` · ${fmtTime(np.s)}–${fmtTime(np.e)} · ${np.t}`] : 'Live TV'));
 }
 
@@ -1797,7 +1864,7 @@ function renderSidebarInner() {
     side.append(catButton('__focus', 'Alle Fußball- & F1-Sender', vc.focus, { sport: true }));
     if (vc.fb) side.append(catButton('__football', 'Nur Fußball', vc.fb, { sport: true }));
     if (vc.f1) side.append(catButton('__f1', 'Nur Formel 1', vc.f1, { sport: true }));
-    for (const c of focusCats) side.append(catButton(c.category_id, c.category_name, counts[c.category_id] || 0, { sport: true, hideable: true }));
+    for (const c of focusCats) side.append(catButton(c.category_id, catLabel(c.category_name), counts[c.category_id] || 0, { sport: true, hideable: true }));
   } else {
     side.append(el('div', { class: 'side-group' }, 'Entdecken'));
     side.append(catButton('__current', `Aktuell (${yNow - 1}–${yNow})`, vc.current));
@@ -1813,11 +1880,11 @@ function renderSidebarInner() {
   if (sportCats.length) {
     side.append(el('div', { class: 'side-group' }, 'Weiterer Sport'));
     side.append(catButton('__sport', 'Alle weiteren Sport-' + label, sportTotal));
-    for (const c of sportCats) side.append(catButton(c.category_id, c.category_name, counts[c.category_id] || 0, { hideable: true }));
+    for (const c of sportCats) side.append(catButton(c.category_id, catLabel(c.category_name), counts[c.category_id] || 0, { hideable: true }));
   }
   side.append(el('div', { class: 'side-group' }, 'Kategorien'));
   side.append(catButton('__all', 'Alle ' + label, total));
-  for (const c of otherCats) side.append(catButton(c.category_id, c.category_name, counts[c.category_id] || 0, { hideable: true }));
+  for (const c of otherCats) side.append(catButton(c.category_id, catLabel(c.category_name), counts[c.category_id] || 0, { hideable: true }));
 }
 
 /* ================= Liste ================= */
@@ -1858,7 +1925,7 @@ function currentItems() {
     case '__top': return { kind, items: sorted(vis.filter((it) => ratingOf(kind, it) >= 7.5), 'rating'), title: 'Top bewertet (ab 7,5)' };
     default: {
       const cat = d.catById[state.cat];
-      return { kind, items: sorted(vis.filter((it) => it.category_id === state.cat)), title: cat ? cat.category_name : '' };
+      return { kind, items: sorted(vis.filter((it) => it.category_id === state.cat)), title: cat ? catLabel(cat.category_name) : '' };
     }
   }
 }
@@ -1876,10 +1943,17 @@ state.sort = { vod: store('sort:vod') || 'year', series: store('sort:series') ||
 function ratingOf(kind, it) {
   const im = state.imdb.get(kind + ':' + itemId(kind, it));
   if (im && im.r) return Number(im.r) || 0;
-  const r = Number(it.rating);
-  if (r > 0) return r;
-  return (Number(it.rating_5based) || 0) * 2;
+  return providerRating(it);
 }
+
+// Anbieterwerte ab 9,8 stammen meist von neuen Titeln mit kaum Stimmen: ignorieren
+function providerRating(it) {
+  let r = Number(it.rating);
+  if (!(r > 0)) r = (Number(it.rating_5based) || 0) * 2;
+  return r > 0 && r < 9.8 ? r : 0;
+}
+
+const fmtRating = (r) => (Number(r) || 0).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 function sortItems(kind, items, how) {
   const arr = [...items];
@@ -2156,7 +2230,7 @@ function liveRow(it, list, index, tokens) {
     el('span', { class: 'num' }, it.num || ''),
     img(it.stream_icon, 'logo', it.name),
     el('div', { class: 'txt' },
-      el('div', { class: 'name' }, tokens ? highlight(it.name, tokens) : it.name),
+      el('div', { class: 'name' }, ...(() => { const l = liveLabel(it.name); return [tokens ? highlight(l.text, tokens) : l.text, ...chipEls(l.chips)]; })()),
       el('div', { class: 'now' }),
       el('div', { class: 'bar hidden' }, el('i'))),
     starButton('live', it));
@@ -2182,7 +2256,8 @@ function posterCard(kind, it, tokens) {
   const pic = kind === 'series' ? it.cover : it.stream_icon;
   const year = it._year || yearOf(it) || '';
   const im = state.imdb.get(kind + ':' + itemId(kind, it));
-  let meta = [year, !(im && im.r) && it.rating && Number(it.rating) > 0 ? '\u2605 ' + it.rating : ''].filter(Boolean).join(' · ');
+  const pr = providerRating(it);
+  let meta = [year, !(im && im.r) && pr ? '\u2605 ' + fmtRating(pr) : ''].filter(Boolean).join(' · ');
   let pi = null;
   if (kind === 'vod') pi = progInfo(getProg('vod', it.stream_id));
   if (kind === 'series') {
@@ -2191,7 +2266,7 @@ function posterCard(kind, it, tokens) {
   }
   if (pi && !pi.done) meta = pi.label + (meta ? ' · ' + meta : '');
   const card = el('div', { class: 'card', title: it.name, 'data-ik': kind + ':' + itemId(kind, it), onclick: () => (kind === 'series' ? openSeries(it) : openMovie(it)) },
-    el('div', { class: 'pwrap' }, img(pic, 'poster', it.name), ...progDecor(pi), im && im.r ? imdbBadge(im) : null),
+    el('div', { class: 'pwrap' }, img(pic, 'poster', it.name), ...progDecor(pi), im && im.r ? imdbBadge(im) : null, it._4k ? el('span', { class: 'b4k' }, '4K') : null),
     starButton(kind, it),
     el('div', { class: 'title' }, tokens ? highlight(displayName(it.name), tokens) : displayName(it.name)),
     el('div', { class: 'meta' }, meta));
@@ -2479,7 +2554,7 @@ async function openMovie(it) {
   try {
     info = (await api('get_vod_info', { vod_id: it.stream_id })).info || {};
   } catch { /* Beschreibung optional */ }
-  const facts = [info.releasedate || info.release_date, info.genre, info.duration, info.rating && Number(info.rating) > 0 && '★ ' + info.rating]
+  const facts = [info.releasedate || info.release_date, info.genre, info.duration, providerRating(info) && '★ ' + fmtRating(providerRating(info))]
     .filter(Boolean).join(' · ');
   const actions = el('div', { class: 'detail-actions' });
   const state1 = el('div', { class: 'ep-state' });
@@ -2605,7 +2680,7 @@ async function openSeries(it) {
       img(info.cover || it.cover, 'poster-lg', name),
       el('div', {},
         el('h2', {}, name),
-        el('div', { class: 'muted' }, [info.releaseDate || info.releasedate, info.genre, info.rating && Number(info.rating) > 0 && '\u2605 ' + info.rating].filter(Boolean).join(' · ')),
+        el('div', { class: 'muted' }, [info.releaseDate || info.releasedate, info.genre, providerRating(info) && '\u2605 ' + fmtRating(providerRating(info))].filter(Boolean).join(' · ')),
         imdbLine('series', it, info.imdb_id || info.imdb),
         summary,
         el('p', {}, info.plot || it.plot || ''),
@@ -2980,7 +3055,7 @@ function playLive(index, retry) {
   startEngine(url, ext, true, cur);
   mountPlayer(target);
   if (!inPreview) openOverlay('player');
-  setupHead(it.name, `Live · ${ext.toUpperCase()} · ${index + 1}/${list.length}`, 'live', it);
+  setupHead(liveLabel(it.name).text, `Live · ${ext.toUpperCase()} · ${index + 1}/${list.length}`, 'live', it);
   const lastBtn = role('last');
   lastBtn.disabled = !player.lastLive;
   lastBtn.title = player.lastLive ? 'Zurück zu: ' + player.lastLive.item.name + ' (Taste Z)' : 'Noch kein vorheriger Sender';
@@ -3009,7 +3084,7 @@ function playMovie(it, sub, fromStart, retry) {
   const url = streamUrl('vod', id, ext);
   mountPlayer($('#playerBox'));
   openOverlay('player');
-  setupHead(it.name, sub || '', 'vod', it);
+  setupHead(displayName(it.name), sub || '', 'vod', it);
   role('epg').replaceChildren();
   const cur = { kind: 'vod', id, item: it, url, ext, offset: 0 };
   cur.restart = () => playMovie(it, sub, false, true);
