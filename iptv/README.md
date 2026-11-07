@@ -15,7 +15,11 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
   Schnellwahl „Nur Deutsch“; einzelne Kategorien per „ausblenden“ in der linken Liste
 - Sport-Kategorien werden automatisch erkannt und oben angezeigt
 - Favoriten für Sender, Filme und Serien
-- Filme und Folgen merken sich die Wiedergabeposition
+- Fortschritt: Filme und Folgen setzen an der gestoppten Stelle fort; ab 90 % gelten sie als gesehen
+  (grüner Haken), angefangene zeigen einen Balken mit Restzeit; Folgen und Filme lassen sich auch
+  von Hand als gesehen/ungesehen markieren
+- Bereich „Weiter ansehen“: angefangene Filme und je Serie die angefangene bzw. nächste Folge
+- Nach dem Ende einer Folge startet die nächste automatisch (10 Sekunden, abbrechbar)
 - Tasten: Pfeil hoch/runter = Sender wechseln, F = Vollbild, Esc = schließen, / = Suche
 
 ## Einmalige Einrichtung
@@ -40,7 +44,7 @@ Browser dürfen Xtream-Server meist nicht direkt abfragen (CORS, unverschlüssel
 
 ## Hinweise
 
-- Zugangsdaten und Favoriten werden nur im Browser auf diesem Rechner gespeichert.
+- Zugangsdaten, Favoriten, Filter und Fortschritt werden nur im Browser auf diesem Rechner gespeichert.
 - Bleibt ein Sender schwarz, „Format“ im Player drücken (wechselt zwischen HLS und TS).
 - Manche Filme liegen als MKV vor; diese spielt nicht jeder Browser ab. Dann „Link kopieren“
   und in VLC öffnen (VLC: Medien → Netzwerkstream öffnen).

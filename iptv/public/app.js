@@ -359,6 +359,184 @@ function starButton(kind, it) {
   return btn;
 }
 
+/* ================= Wiedergabe-Fortschritt ================= */
+
+// state.prog:       { 'vod:ID' | 'episode:ID': { pos, dur, done, t, hide, item } }
+// state.seriesProg: { seriesId: { series, ep, next, t, hide } }  (zuletzt gesehene Folge je Serie)
+const DONE_RATIO = 0.9;
+
+function loadProgress() {
+  const acc = accountKey();
+  state.prog = store('prog:' + acc) || {};
+  state.seriesProg = store('seriesprog:' + acc) || {};
+  // Positionen aus der ersten Version uebernehmen
+  try {
+    const prefix = 'pos:' + acc + ':';
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(prefix)) continue;
+      const key = k.slice(prefix.length);
+      if (!state.prog[key]) state.prog[key] = { pos: Number(localStorage.getItem(k)) || 0, dur: 0, done: false, t: Date.now() };
+      localStorage.removeItem(k);
+    }
+  } catch { /* ignorieren */ }
+  saveProgress();
+}
+
+function saveProgress() {
+  store('prog:' + accountKey(), state.prog);
+  store('seriesprog:' + accountKey(), state.seriesProg);
+}
+
+const getProg = (kind, id) => state.prog[kind + ':' + id];
+
+function updateProg(kind, id, patch) {
+  const key = kind + ':' + id;
+  const p = { pos: 0, dur: 0, done: false, ...(state.prog[key] || {}), ...patch, t: Date.now() };
+  if (p.dur > 0 && p.pos / p.dur >= DONE_RATIO) p.done = true;
+  state.prog[key] = p;
+  return p;
+}
+
+function setSeen(kind, id, seen) {
+  const p = updateProg(kind, id, seen ? { done: true } : { done: false, pos: 0 });
+  if (!seen) p.done = false;
+  saveProgress();
+}
+
+// Anzeige: Balken in Prozent + Text
+function progInfo(p) {
+  if (!p) return null;
+  if (p.done) return { pct: 100, label: 'gesehen', done: true };
+  if (p.pos < 30) return null;
+  const pct = p.dur ? Math.min(99, (p.pos / p.dur) * 100) : 0;
+  const rest = p.dur ? Math.max(1, Math.round((p.dur - p.pos) / 60)) : 0;
+  return { pct, label: rest ? `noch ${rest} Min.` : `bei ${Math.floor(p.pos / 60)} Min.`, done: false };
+}
+
+function progDecor(pi) {
+  if (!pi) return [];
+  return [
+    el('div', { class: 'pbar' + (pi.done ? ' done' : '') }, el('i', { style: `width:${pi.pct}%` })),
+    pi.done ? el('span', { class: 'seen-badge', title: 'gesehen' }, '✓') : null,
+  ];
+}
+
+const plainItem = (it) => Object.fromEntries(Object.entries(it).filter(([k]) => !k.startsWith('_')));
+
+/* ---------- Serien: Folgenliste ---------- */
+
+const seriesInfoCache = new Map();
+async function getSeriesInfo(id) {
+  const key = String(id);
+  const c = seriesInfoCache.get(key);
+  if (c && Date.now() - c.t < 30 * 60 * 1000) return c.data;
+  const data = await api('get_series_info', { series_id: id });
+  seriesInfoCache.set(key, { t: Date.now(), data });
+  return data;
+}
+
+// alle Folgen in Reihenfolge (Staffel, Folge)
+function flatEpisodes(data) {
+  const eps = (data && data.episodes) || {};
+  const seasons = Object.keys(eps).sort((a, b) => Number(a) - Number(b));
+  const out = [];
+  for (const s of seasons) {
+    const list = [...(eps[s] || [])].sort((a, b) => Number(a.episode_num) - Number(b.episode_num));
+    for (const ep of list) {
+      const ei = ep.info || {};
+      out.push({
+        id: String(ep.id), season: String(s), num: ep.episode_num, title: ep.title || '',
+        ext: ep.container_extension || 'mp4', img: ei.movie_image || '', plot: ei.plot || '', dur: ei.duration || '',
+      });
+    }
+  }
+  return out;
+}
+
+const epLabel = (e) => `S${e.season} E${e.num}`;
+const seriesPlain = (it, name) => ({ series_id: it.series_id, name: name || it.name, cover: it.cover || '' });
+
+// Index der Folge, mit der es weitergeht (-1 = alles gesehen)
+function continueIndex(seriesId, flat) {
+  const sp = state.seriesProg[seriesId];
+  if (sp && sp.ep) {
+    const i = flat.findIndex((e) => e.id === sp.ep.id);
+    if (i >= 0) {
+      const p = getProg('episode', flat[i].id);
+      if (!p || !p.done) return i;
+      for (let j = i + 1; j < flat.length; j++) if (!(getProg('episode', flat[j].id) || {}).done) return j;
+      return -1;
+    }
+  }
+  return flat.findIndex((e) => !(getProg('episode', e.id) || {}).done);
+}
+
+/* ---------- Weiter ansehen ---------- */
+
+function contEntries() {
+  const out = [];
+  for (const [key, p] of Object.entries(state.prog)) {
+    if (!key.startsWith('vod:') || p.done || p.hide || p.pos < 30 || !p.item) continue;
+    out.push({ type: 'vod', t: p.t, item: p.item, prog: p });
+  }
+  for (const sp of Object.values(state.seriesProg)) {
+    if (sp.hide || !sp.ep) continue;
+    const p = getProg('episode', sp.ep.id);
+    if (p && p.done) {
+      if (!sp.next) continue;
+      out.push({ type: 'series', t: sp.t, sp, ep: sp.next, resume: false, prog: getProg('episode', sp.next.id) });
+    } else {
+      out.push({ type: 'series', t: sp.t, sp, ep: sp.ep, resume: true, prog: p });
+    }
+  }
+  return out.sort((a, b) => b.t - a.t);
+}
+
+function contCard(en) {
+  const isVod = en.type === 'vod';
+  const title = isVod ? en.item.name : en.sp.series.name;
+  const pic = isVod ? en.item.stream_icon : (en.ep.img || en.sp.series.cover);
+  const pi = progInfo(en.prog);
+  const meta = isVod
+    ? (pi ? pi.label : '')
+    : `${en.resume ? '' : 'Nächste: '}${epLabel(en.ep)}${pi && !pi.done ? ' · ' + pi.label : ''}`;
+  const remove = el('button', { class: 'star', title: 'Aus „Weiter ansehen“ entfernen' }, '×');
+  remove.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isVod) updateProg('vod', en.item.stream_id, { hide: true });
+    else en.sp.hide = true;
+    saveProgress();
+    renderSidebar();
+    render();
+  });
+  const info = el('button', { class: 'card-info', title: 'Details' }, 'Details');
+  info.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isVod) openMovie(en.item); else openSeries(en.sp.series);
+  });
+  return el('div', {
+    class: 'card' + (isVod ? '' : ' wide'),
+    title,
+    onclick: () => (isVod ? playMovie(en.item) : playSeriesEpisode(en.sp.series, en.ep.id)),
+  },
+  el('div', { class: 'pwrap' }, img(pic, isVod ? 'poster' : 'poster wide', title), ...progDecor(pi), el('span', { class: 'play-ico' }, '▶')),
+  remove,
+  el('div', { class: 'title' }, title),
+  el('div', { class: 'meta' }, meta, ' ', info));
+}
+
+async function playSeriesEpisode(series, epId) {
+  try {
+    const flat = flatEpisodes(await getSeriesInfo(series.series_id));
+    const i = flat.findIndex((e) => e.id === String(epId));
+    if (i < 0) { toast('Folge nicht mehr beim Anbieter vorhanden'); return; }
+    playEpisode(series, flat, i);
+  } catch (err) {
+    toast('Fehler: ' + err.message);
+  }
+}
+
 /* ================= Anmeldung ================= */
 
 function normalizeServer(raw) {
@@ -380,6 +558,7 @@ async function login(creds) {
   store('creds', creds);
   loadFavs();
   loadFilter();
+  loadProgress();
 }
 
 function showLogin(msg) {
@@ -448,8 +627,9 @@ async function switchTab(tab) {
   store('lastTab', tab);
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
 
-  if (tab === 'fav') {
-    state.cat = state.cat && state.cat.startsWith('fav:') ? state.cat : 'fav:live';
+  if (tab === 'fav' || tab === 'cont') {
+    const prefix = tab + ':';
+    state.cat = state.cat && state.cat.startsWith(prefix) ? state.cat : prefix + (tab === 'fav' ? 'live' : 'all');
     renderSidebar();
     render();
     return;
@@ -486,7 +666,7 @@ $('#search').addEventListener('input', (e) => {
 
 function selectCat(cat) {
   state.cat = cat;
-  if (state.tab !== 'fav') store('lastCat:' + state.tab, cat);
+  if (KINDS.includes(state.tab)) store('lastCat:' + state.tab, cat);
   clearSearch();
   document.querySelectorAll('.cat').forEach((b) => b.classList.toggle('active', b.dataset.cat === cat));
   render();
@@ -520,6 +700,15 @@ function renderSidebar() {
       catButton('fav:series', 'Serien', state.favs.series.length));
     return;
   }
+  if (state.tab === 'cont') {
+    const all = contEntries();
+    side.append(
+      el('div', { class: 'side-group' }, 'Weiter ansehen'),
+      catButton('cont:all', 'Alles', all.length),
+      catButton('cont:vod', 'Filme', all.filter((e) => e.type === 'vod').length),
+      catButton('cont:series', 'Serien', all.filter((e) => e.type === 'series').length));
+    return;
+  }
 
   const kind = state.tab;
   const d = state.data[kind];
@@ -551,6 +740,11 @@ function renderSidebar() {
 /* ================= Liste ================= */
 
 function currentItems() {
+  if (state.tab === 'cont') {
+    const f = state.cat.slice(5);
+    const items = contEntries().filter((e) => f === 'all' || e.type === f);
+    return { kind: 'cont', items, title: 'Weiter ansehen' };
+  }
   if (state.tab === 'fav') {
     const kind = state.cat.slice(4);
     return { kind, items: state.favs[kind].map((f) => f.item), title: 'Favoriten: ' + KIND_LABEL[kind] };
@@ -571,7 +765,7 @@ function showPreview(on) {
 
 function render() {
   if (state.search) return renderSearch();
-  if (state.tab !== 'fav' && !state.data[state.tab]) return;
+  if (KINDS.includes(state.tab) && !state.data[state.tab]) return;
   const { kind, items, title } = currentItems();
   state.view = items;
   state.viewKind = kind;
@@ -583,7 +777,10 @@ function render() {
   list.className = 'list ' + (kind === 'live' ? 'rows' : 'grid');
   list.replaceChildren();
   if (!items.length) {
-    list.append(el('div', { class: 'empty' }, state.tab === 'fav' ? 'Noch keine Favoriten. Stern bei einem Eintrag anklicken.' : 'Keine Einträge (evtl. durch Länderfilter ausgeblendet).'));
+    const msg = state.tab === 'fav' ? 'Noch keine Favoriten. Stern bei einem Eintrag anklicken.'
+      : state.tab === 'cont' ? 'Nichts angefangen. Hier erscheinen angefangene Filme und die nächste Folge Ihrer Serien.'
+        : 'Keine Einträge (evtl. durch Länderfilter ausgeblendet).';
+    list.append(el('div', { class: 'empty' }, msg));
     return;
   }
   renderMore();
@@ -594,7 +791,7 @@ function renderMore() {
   const end = Math.min(view.length, state.rendered + PAGE);
   const frag = document.createDocumentFragment();
   for (let i = state.rendered; i < end; i++) {
-    frag.append(kind === 'live' ? liveRow(view[i], view, i) : posterCard(kind, view[i]));
+    frag.append(kind === 'live' ? liveRow(view[i], view, i) : kind === 'cont' ? contCard(view[i]) : posterCard(kind, view[i]));
   }
   $('#list').append(frag);
   state.rendered = end;
@@ -727,9 +924,16 @@ function liveRow(it, list, index, tokens) {
 function posterCard(kind, it, tokens) {
   const pic = kind === 'series' ? it.cover : it.stream_icon;
   const year = it.year || (it.releaseDate || it.releasedate || '').slice(0, 4);
-  const meta = [year, it.rating && Number(it.rating) > 0 ? '★ ' + it.rating : ''].filter(Boolean).join(' · ');
+  let meta = [year, it.rating && Number(it.rating) > 0 ? '★ ' + it.rating : ''].filter(Boolean).join(' · ');
+  let pi = null;
+  if (kind === 'vod') pi = progInfo(getProg('vod', it.stream_id));
+  if (kind === 'series') {
+    const sp = state.seriesProg[it.series_id];
+    if (sp && sp.ep) meta = 'Zuletzt ' + epLabel(sp.ep) + (meta ? ' · ' + meta : '');
+  }
+  if (pi && !pi.done) meta = pi.label + (meta ? ' · ' + meta : '');
   return el('div', { class: 'card', title: it.name, onclick: () => (kind === 'series' ? openSeries(it) : openMovie(it)) },
-    img(pic, 'poster', it.name),
+    el('div', { class: 'pwrap' }, img(pic, 'poster', it.name), ...progDecor(pi)),
     starButton(kind, it),
     el('div', { class: 'title' }, tokens ? highlight(it.name, tokens) : it.name),
     el('div', { class: 'meta' }, meta));
@@ -812,9 +1016,22 @@ async function showEpg(it, box) {
 
 function openOverlay(id) { $('#' + id).classList.remove('hidden'); }
 
+let detailRefresh = null;
 function closeOverlay(id) {
   $('#' + id).classList.add('hidden');
-  if (id === 'player') stopPlayer();
+  if (id === 'player') {
+    stopPlayer();
+    // Fortschritt in offenen Ansichten aktualisieren
+    if (detailRefresh && !$('#detail').classList.contains('hidden')) detailRefresh();
+    if (!state.search && ['cont', 'vod', 'series'].includes(state.tab)) {
+      const top = $('#listCol').scrollTop;
+      renderSidebar();
+      render();
+      while (state.rendered < state.view.length && $('#listCol').scrollHeight < top + $('#listCol').clientHeight) renderMore();
+      $('#listCol').scrollTop = top;
+    }
+  }
+  if (id === 'detail') detailRefresh = null;
 }
 
 document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => closeOverlay(b.dataset.close)));
@@ -842,7 +1059,6 @@ function firstUrl(v) {
 
 async function openMovie(it) {
   const body = $('#detailBody');
-  const ext = it.container_extension || 'mp4';
   body.replaceChildren(el('div', { class: 'empty' }, 'Lade ...'));
   openOverlay('detail');
   let info = {};
@@ -851,6 +1067,27 @@ async function openMovie(it) {
   } catch { /* Beschreibung optional */ }
   const facts = [info.releasedate || info.release_date, info.genre, info.duration, info.rating && Number(info.rating) > 0 && '★ ' + info.rating]
     .filter(Boolean).join(' · ');
+  const actions = el('div', { class: 'detail-actions' });
+  const state1 = el('div', { class: 'ep-state' });
+
+  function drawActions() {
+    const p = getProg('vod', it.stream_id);
+    const pi = progInfo(p);
+    const resumable = pi && !pi.done;
+    state1.textContent = pi ? (pi.done ? '✓ gesehen' : 'Angefangen, ' + pi.label) : '';
+    state1.className = 'ep-state' + (pi && pi.done ? ' done' : '');
+    actions.replaceChildren(
+      el('button', { class: 'btn primary', onclick: () => playMovie(it, facts) }, resumable ? '▶ Weiter ansehen' : '▶ Abspielen'),
+      resumable ? el('button', { class: 'btn', onclick: () => playMovie(it, facts, true) }, 'Von vorn') : null,
+      el('button', {
+        class: 'btn',
+        onclick: () => { setSeen('vod', it.stream_id, !(p && p.done)); drawActions(); },
+      }, p && p.done ? 'Als ungesehen markieren' : 'Als gesehen markieren'),
+      favButton('vod', it));
+  }
+  drawActions();
+  detailRefresh = drawActions;
+
   body.replaceChildren(
     detailFrame(firstUrl(info.backdrop_path)),
     el('div', { class: 'detail-top' },
@@ -858,12 +1095,31 @@ async function openMovie(it) {
       el('div', {},
         el('h2', {}, it.name),
         el('div', { class: 'muted' }, facts),
+        state1,
         el('p', {}, info.plot || info.description || ''),
         info.cast ? el('div', { class: 'muted' }, 'Mit: ' + info.cast) : null,
         info.director ? el('div', { class: 'muted' }, 'Regie: ' + info.director) : null,
-        el('div', { class: 'detail-actions' },
-          el('button', { class: 'btn primary', onclick: () => playFile('vod', it.stream_id, ext, it.name, facts, it) }, '▶ Abspielen'),
-          favButton('vod', it)))));
+        actions)));
+}
+
+function episodeRow(series, flat, i, redraw) {
+  const e = flat[i];
+  const p = getProg('episode', e.id);
+  const pi = progInfo(p);
+  const mark = el('button', { class: 'ep-mark' + (p && p.done ? ' on' : ''), title: p && p.done ? 'Als ungesehen markieren' : 'Als gesehen markieren' }, '✓');
+  mark.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    setSeen('episode', e.id, !(p && p.done));
+    redraw();
+  });
+  return el('div', { class: 'episode' + (pi && pi.done ? ' seen' : ''), onclick: () => playEpisode(series, flat, i) },
+    el('div', { class: 'thumb' }, img(e.img, 'ep-img', epLabel(e)), ...progDecor(pi)),
+    el('div', { class: 'ep-t' },
+      el('div', {}, el('strong', {}, 'E' + e.num + '  '), e.title || epLabel(e)),
+      e.plot ? el('div', { class: 'ep-plot' }, e.plot) : null,
+      pi ? el('div', { class: 'ep-state' + (pi.done ? ' done' : '') }, pi.label) : null),
+    el('span', { class: 'ep-d' }, e.dur),
+    mark);
 }
 
 async function openSeries(it) {
@@ -872,39 +1128,61 @@ async function openSeries(it) {
   openOverlay('detail');
   let data;
   try {
-    data = await api('get_series_info', { series_id: it.series_id });
+    data = await getSeriesInfo(it.series_id);
   } catch (err) {
     body.replaceChildren(el('div', { class: 'empty' }, 'Fehler: ' + err.message));
     return;
   }
   const info = data.info || {};
-  const episodes = data.episodes || {};
-  const seasons = Object.keys(episodes).sort((a, b) => Number(a) - Number(b));
+  const flat = flatEpisodes(data);
+  const seasons = [...new Set(flat.map((e) => e.season))];
+  const name = info.name || it.name;
+  const series = { ...seriesPlain(it, name), cover: it.cover || info.cover || '' };
   const seasonBar = el('div', { class: 'seasons' });
   const epList = el('div', { class: 'episodes' });
-  const name = info.name || it.name;
+  const actions = el('div', { class: 'detail-actions' });
+  const summary = el('div', { class: 'ep-state' });
+  let current = null;
 
   function showSeason(s) {
-    seasonBar.querySelectorAll('button').forEach((b) => b.classList.toggle('primary', b.dataset.s === s));
-    epList.replaceChildren(...(episodes[s] || []).map((ep) => {
-      const label = `S${s} E${ep.episode_num}`;
-      const ei = ep.info || {};
-      const seen = Number(store(`pos:${accountKey()}:episode:${ep.id}`)) > 30;
-      return el('div', {
-        class: 'episode',
-        onclick: () => playFile('episode', ep.id, ep.container_extension || 'mp4', name, `${label} · ${ep.title || ''}`),
-      },
-      img(ei.movie_image, 'ep-img', label),
-      el('div', { class: 'ep-t' },
-        el('div', {}, el('strong', {}, 'E' + ep.episode_num + '  '), ep.title || label, seen ? el('span', { class: 'muted' }, '  · angesehen') : null),
-        ei.plot ? el('div', { class: 'ep-plot' }, ei.plot) : null),
-      el('span', { class: 'ep-d' }, ei.duration || ''));
-    }));
+    current = s;
+    seasonBar.querySelectorAll('button').forEach((b) => {
+      b.classList.toggle('primary', b.dataset.s === s);
+      const eps = flat.filter((e) => e.season === b.dataset.s);
+      const allSeen = eps.length && eps.every((e) => (getProg('episode', e.id) || {}).done);
+      b.textContent = 'Staffel ' + b.dataset.s + (allSeen ? ' ✓' : '');
+    });
+    epList.replaceChildren(...flat.map((e, i) => [e, i]).filter(([e]) => e.season === s).map(([, i]) => episodeRow(series, flat, i, redraw)));
+  }
+
+  function drawActions() {
+    const ci = continueIndex(series.series_id, flat);
+    const seen = flat.filter((e) => (getProg('episode', e.id) || {}).done).length;
+    summary.textContent = flat.length ? `${seen} von ${flat.length} Folgen gesehen` : '';
+    summary.className = 'ep-state' + (seen && seen === flat.length ? ' done' : '');
+    let label = '';
+    if (ci >= 0) {
+      const p = progInfo(getProg('episode', flat[ci].id));
+      label = p && !p.done ? `▶ Weiter: ${epLabel(flat[ci])} (${p.label})`
+        : ci === 0 && !seen ? `▶ Abspielen: ${epLabel(flat[0])}` : `▶ Nächste: ${epLabel(flat[ci])}`;
+    }
+    actions.replaceChildren(
+      ci >= 0 ? el('button', { class: 'btn primary', onclick: () => playEpisode(series, flat, ci) }, label)
+        : flat.length ? el('button', { class: 'btn primary', onclick: () => playEpisode(series, flat, 0) }, '▶ Von vorn') : null,
+      favButton('series', it));
+    return ci;
+  }
+
+  function redraw() {
+    drawActions();
+    showSeason(current);
   }
 
   for (const s of seasons) {
     seasonBar.append(el('button', { class: 'btn small', 'data-s': s, onclick: () => showSeason(s) }, 'Staffel ' + s));
   }
+  const ci = drawActions();
+  detailRefresh = redraw;
 
   body.replaceChildren(
     detailFrame(firstUrl(info.backdrop_path) || firstUrl(it.backdrop_path)),
@@ -913,12 +1191,13 @@ async function openSeries(it) {
       el('div', {},
         el('h2', {}, name),
         el('div', { class: 'muted' }, [info.releaseDate || info.releasedate, info.genre, info.rating && Number(info.rating) > 0 && '★ ' + info.rating].filter(Boolean).join(' · ')),
+        summary,
         el('p', {}, info.plot || it.plot || ''),
         info.cast ? el('div', { class: 'muted' }, 'Mit: ' + info.cast) : null,
-        el('div', { class: 'detail-actions' }, favButton('series', it)))),
+        actions)),
     seasons.length ? seasonBar : el('div', { class: 'empty' }, 'Keine Folgen vorhanden.'),
     epList);
-  if (seasons.length) showSeason(seasons[0]);
+  if (seasons.length) showSeason(ci >= 0 ? flat[ci].season : seasons[0]);
 }
 
 /* ================= Player ================= */
@@ -928,6 +1207,8 @@ const player = { hls: null, ts: null, current: null, mount: null, saveTimer: 0, 
 const role = (r) => (player.mount ? $(`[data-role="${r}"]`, player.mount) : null);
 
 function stopPlayer() {
+  saveCurrentPos();
+  cancelNext();
   if (player.hls) { player.hls.destroy(); player.hls = null; }
   if (player.ts) {
     try { player.ts.pause(); player.ts.unload(); player.ts.detachMediaElement(); player.ts.destroy(); } catch { /* ignorieren */ }
@@ -1035,34 +1316,107 @@ function playLive(index, retry) {
   showEpg(it, role('epg'));
 }
 
-// kind: 'vod' (Film) oder 'episode' (Serienfolge); item nur bei Filmen (fuer Favorit)
-function playFile(kind, id, ext, title, sub, item) {
-  const url = streamUrl(kind === 'episode' ? 'series' : 'vod', id, ext);
-  startEngine(url, ext, false, { kind, id, item: item || null, url, posKey: `pos:${accountKey()}:${kind}:${id}` });
+function playMovie(it, sub, fromStart) {
+  const ext = it.container_extension || 'mp4';
+  const id = String(it.stream_id);
+  if (fromStart) updateProg('vod', id, { pos: 0, done: false });
+  updateProg('vod', id, { item: plainItem(it), hide: false });
+  saveProgress();
+  const url = streamUrl('vod', id, ext);
+  startEngine(url, ext, false, { kind: 'vod', id, item: it, url });
   mountPlayer($('#playerBox'));
   openOverlay('player');
-  setupHead(title, sub, kind, item || null);
+  setupHead(it.name, sub || '', 'vod', it);
   role('epg').replaceChildren();
 }
 
-// Wiedergabeposition fuer Filme/Folgen merken
+function playEpisode(series, flat, idx) {
+  const e = flat[idx];
+  if (!e) return;
+  const { plot, ...epShort } = e;
+  const next = flat[idx + 1] ? (({ plot: _p, ...n }) => n)(flat[idx + 1]) : null;
+  state.seriesProg[series.series_id] = { series, ep: epShort, next, t: Date.now() };
+  saveProgress();
+  const url = streamUrl('series', e.id, e.ext);
+  startEngine(url, e.ext, false, { kind: 'episode', id: e.id, item: null, url, series, flat, idx });
+  mountPlayer($('#playerBox'));
+  openOverlay('player');
+  setupHead(series.name, `${epLabel(e)}${e.title ? ' · ' + e.title : ''}`, 'episode', null);
+  role('epg').replaceChildren();
+}
+
+// beim Start an gespeicherter Stelle fortsetzen
 video.addEventListener('loadedmetadata', () => {
   const cur = player.current;
-  if (!cur || !cur.posKey) return;
-  const pos = Number(store(cur.posKey)) || 0;
-  if (pos > 30 && (!isFinite(video.duration) || pos < video.duration - 60)) {
-    video.currentTime = pos;
-    toast('Fortsetzen bei ' + Math.floor(pos / 60) + ' Min.');
+  if (!cur || cur.kind === 'live') return;
+  const p = getProg(cur.kind, cur.id);
+  if (p && !p.done && p.pos > 30 && (!isFinite(video.duration) || p.pos < video.duration - 30)) {
+    video.currentTime = p.pos;
+    toast('Fortsetzen bei ' + Math.floor(p.pos / 60) + ' Min.');
   }
 });
-video.addEventListener('timeupdate', () => {
+
+function saveCurrentPos() {
   const cur = player.current;
-  if (!cur || !cur.posKey) return;
+  if (!cur || cur.kind === 'live' || !video.currentTime) return;
+  const dur = isFinite(video.duration) ? Math.floor(video.duration) : 0;
+  updateProg(cur.kind, cur.id, { pos: Math.floor(video.currentTime), dur });
+  if (cur.kind === 'episode' && state.seriesProg[cur.series.series_id]) state.seriesProg[cur.series.series_id].t = Date.now();
+  saveProgress();
+}
+
+video.addEventListener('timeupdate', () => {
   const now = Date.now();
   if (now - player.saveTimer < 5000) return;
   player.saveTimer = now;
-  store(cur.posKey, Math.floor(video.currentTime));
+  saveCurrentPos();
 });
+video.addEventListener('pause', saveCurrentPos);
+
+video.addEventListener('ended', () => {
+  const cur = player.current;
+  if (!cur || cur.kind === 'live') return;
+  const dur = isFinite(video.duration) ? Math.floor(video.duration) : 0;
+  updateProg(cur.kind, cur.id, { pos: dur, dur, done: true });
+  saveProgress();
+  if (cur.kind === 'episode' && cur.flat[cur.idx + 1]) {
+    if (document.fullscreenElement === video) document.exitFullscreen().catch(() => {});
+    startNextCountdown(cur);
+  }
+});
+
+// Naechste Folge automatisch starten (10 Sekunden Countdown)
+let nextTimer = null;
+function cancelNext() {
+  clearInterval(nextTimer);
+  nextTimer = null;
+  const n = document.getElementById('nextUp');
+  if (n) n.remove();
+}
+
+function startNextCountdown(cur) {
+  cancelNext();
+  const e = cur.flat[cur.idx + 1];
+  let left = 10;
+  const label = el('div', { class: 'muted' });
+  const go = () => { cancelNext(); playEpisode(cur.series, cur.flat, cur.idx + 1); };
+  const box = el('div', { id: 'nextUp', class: 'nextup' },
+    img(e.img, 'ep-img', epLabel(e)),
+    el('div', { class: 'nu-txt' },
+      el('div', { class: 'muted' }, 'Nächste Folge'),
+      el('strong', {}, `${epLabel(e)}${e.title ? ' · ' + e.title : ''}`),
+      label),
+    el('div', { class: 'nu-btns' },
+      el('button', { class: 'btn primary', onclick: go }, '▶ Jetzt'),
+      el('button', { class: 'btn', onclick: cancelNext }, 'Abbrechen')));
+  const tick = () => {
+    label.textContent = `startet in ${left} s`;
+    if (left-- <= 0) go();
+  };
+  tick();
+  nextTimer = setInterval(tick, 1000);
+  role('slot').append(box);
+}
 
 function stepChannel(delta) {
   const cur = player.current;
@@ -1074,7 +1428,7 @@ function stepChannel(delta) {
 
 function goFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen();
-  else video.requestFullscreen().catch(() => {});
+  else (role('slot') || video).requestFullscreen().catch(() => {});
 }
 
 // Knoepfe in Vorschau und grossem Player
