@@ -323,6 +323,53 @@ select.search { color: var(--text); }
 .video-slot .rem-bar { position: absolute; }
 .rem-ico { font-size: 24px; }
 
+/* Programmraster */
+.view-toggle { margin-left: auto; display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.view-toggle button { background: var(--panel); border: none; padding: 6px 14px; cursor: pointer; color: var(--muted); font-weight: 600; font-size: 13px; }
+.view-toggle button.active { background: var(--accent); color: #fff; }
+.grid-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.eg-info { font-size: 12px; margin-left: 6px; }
+.epg-grid {
+  position: relative; overflow: auto; height: calc(100vh - 205px); min-height: 300px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+}
+.eg-head { position: sticky; top: 0; z-index: 3; height: 30px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+.eg-corner {
+  position: sticky; left: 0; z-index: 4; width: 210px; height: 30px; display: flex; align-items: center;
+  padding-left: 10px; background: var(--panel-2); border-right: 1px solid var(--line); font-size: 12px; color: var(--muted);
+}
+.eg-tick { position: absolute; top: 0; height: 30px; line-height: 30px; padding-left: 6px; border-left: 1px solid var(--line); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.eg-tick.day { color: var(--accent-2); font-weight: 700; border-left-color: var(--accent); }
+.eg-rows { position: relative; }
+.eg-row { display: flex; height: 58px; border-bottom: 1px solid var(--line); }
+.eg-ch {
+  position: sticky; left: 0; z-index: 2; width: 210px; flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+  padding: 0 8px; background: var(--panel); border-right: 1px solid var(--line); cursor: pointer;
+}
+.eg-ch:hover { background: var(--panel-2); }
+.eg-row.playing .eg-ch { box-shadow: inset 3px 0 var(--accent); background: var(--panel-2); }
+.eg-ch .num { color: var(--muted); font-size: 11px; width: 26px; text-align: right; flex-shrink: 0; }
+.eg-ch .logo { width: 46px; height: 30px; object-fit: contain; flex-shrink: 0; background: #0a0c0f; border-radius: 4px; }
+.eg-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eg-track { position: relative; flex: 1; }
+.eg-prog {
+  position: absolute; top: 4px; bottom: 4px; background: var(--panel-2); border-radius: 5px; padding: 5px 8px;
+  overflow: hidden; overflow: clip; cursor: pointer; border: 1px solid transparent;
+}
+.eg-prog:hover { border-color: var(--accent); z-index: 1; }
+.eg-prog.live { background: #1d3a2a; }
+.eg-prog.past { opacity: .45; }
+.eg-prog.rem { border-color: var(--star); }
+.eg-t { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.eg-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
+/* Titel bleibt sichtbar, wenn die Sendung links hinter der Senderspalte beginnt */
+.eg-t, .eg-time { position: sticky; left: 218px; width: fit-content; max-width: 100%; }
+.eg-empty { position: sticky; left: 220px; display: inline-block; margin-top: 19px; color: var(--muted); font-size: 12px; }
+.eg-now { position: absolute; top: 0; bottom: 0; width: 2px; background: #e5484d; z-index: 1; pointer-events: none; }
+.eg-now.head { z-index: 3; }
+.eg-sentinel { height: 1px; }
+.logo-lg { width: 160px; height: 100px; object-fit: contain; background: #0a0c0f; border-radius: 8px; flex-shrink: 0; }
+
 /* Naechste Folge */
 .nextup {
   position: absolute; right: 16px; bottom: 60px; z-index: 5; width: min(460px, calc(100% - 32px));

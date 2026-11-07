@@ -16,6 +16,9 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
 - Sport-Kategorien werden automatisch erkannt und oben angezeigt
 - Programmsuche: die Suche findet auch Sendungen im Programm der nächsten 4 Tage (z. B. „Bayern“),
   mit Tag, Uhrzeit und Sender; laufende Sendungen mit einem Klick ansehen
+- Programmraster: in Live TV oben „Programm“ wählen; Sender untereinander, Zeit waagerecht (24 Std.),
+  rote Linie = jetzt; Heute/Morgen/weitere Tage; Klick auf laufende Sendung schaltet ein,
+  auf kommende zeigt Details mit Erinnerung
 - Erinnerungen: Glocke an kommenden Sendungen (Suche und Programm neben dem Player); Hinweis in der App
   und als Systemmitteilung, Vorlauf einstellbar, auf Wunsch automatisch umschalten; Liste unter
   Live TV → „Erinnerungen“. Funktioniert nur, solange die App im Browser geöffnet ist.

@@ -123,6 +123,10 @@ async function handleEpg(req, res, u) {
     return sendJson(res, 200, epg.ensure(CONFIG_DIR, body, USER_AGENT));
   }
   if (!account) return sendJson(res, 400, { error: 'Konto fehlt' });
+  if (route === 'grid' && req.method === 'POST') {
+    const body = await readBody(req, 5 * 1024 * 1024);
+    return sendJson(res, 200, epg.grid(CONFIG_DIR, body.account || account, body.channels, Number(body.from) || 0, Number(body.to) || 0));
+  }
   if (route === 'status') return sendJson(res, 200, epg.statusOf(epg.storeFor(CONFIG_DIR, account)));
   if (route === 'search') return sendJson(res, 200, epg.search(CONFIG_DIR, account, u.searchParams.get('q') || ''));
   if (route === 'channel') return sendJson(res, 200, { list: epg.channel(CONFIG_DIR, account, u.searchParams.get('ch') || '') });

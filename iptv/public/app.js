@@ -146,6 +146,8 @@ const KIND_LABEL = { live: 'Sender', vod: 'Filme', series: 'Serien' };
 state.recent = { list: [], t: 0 };
 state.reminders = { list: [], t: 0, lead: 2, auto: false };
 state.guideMap = null;
+state.liveView = store('liveView') || 'list';
+state.gridDay = 0;
 state.dupHidden = new Set();
 state.variants = new Map();
 
@@ -1085,6 +1087,192 @@ function fireReminder(r) {
   }
 }
 
+/* ================= Programmraster ================= */
+
+const EG = { px: 4, chW: 210, span: 24 * 3600, chunk: 50 };
+let gridObserver = null;
+
+$('#viewToggle').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-view]');
+  if (!b || b.dataset.view === state.liveView) return;
+  state.liveView = b.dataset.view;
+  store('liveView', state.liveView);
+  render();
+});
+
+function gridStartFor(dayOffset) {
+  if (!dayOffset) return Math.floor((Date.now() / 1000 - 2 * 3600) / 1800) * 1800;
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + dayOffset);
+  return d.getTime() / 1000;
+}
+
+const xOf = (t) => ((t - state.grid.from) / 60) * EG.px;
+
+function gridPlay(it) {
+  const g = state.grid;
+  state.livePlaylist = g.items;
+  playLive(Math.max(0, g.items.indexOf(it)));
+}
+
+function markGridPlaying() {
+  const sid = player.current && player.current.kind === 'live' ? String(player.current.item.stream_id) : '';
+  document.querySelectorAll('.eg-row').forEach((r) => r.classList.toggle('playing', r.dataset.sid === sid));
+}
+
+function scrollGridToNow() {
+  const sc = $('#egScroll');
+  if (sc && state.grid) sc.scrollLeft = Math.max(0, xOf(Date.now() / 1000) - 30 * EG.px);
+}
+
+function renderGrid(items) {
+  state.gridMode = true;
+  const day = state.gridDay || 0;
+  const from = gridStartFor(day);
+  const to = from + EG.span;
+  state.grid = { items, from, to, next: 0, busy: false };
+  const list = $('#list');
+  list.className = 'list';
+  list.replaceChildren();
+
+  const days = [0, 1, 2, 3].map((o) => {
+    const d = new Date();
+    d.setDate(d.getDate() + o);
+    const label = o === 0 ? 'Heute' : o === 1 ? 'Morgen' : d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+    return el('button', { class: 'btn small' + (o === day ? ' primary' : ''), onclick: () => { state.gridDay = o; render(); } }, label);
+  });
+  const nowBtn = el('button', {
+    class: 'btn small',
+    onclick: () => { if (state.gridDay) { state.gridDay = 0; render(); } else scrollGridToNow(); },
+  }, 'Jetzt');
+  const bar = el('div', { class: 'grid-bar' }, ...days, nowBtn, el('span', { class: 'muted eg-info', id: 'egInfo' }, guideInfoText()));
+
+  const width = EG.chW + (EG.span / 60) * EG.px;
+  const head = el('div', { class: 'eg-head', style: `width:${width}px` }, el('div', { class: 'eg-corner' }, 'Sender'));
+  for (let t = from; t < to; t += 1800) {
+    const d = new Date(t * 1000);
+    const midnight = d.getHours() === 0 && d.getMinutes() === 0;
+    head.append(el('div', { class: 'eg-tick' + (midnight ? ' day' : ''), style: `left:${EG.chW + xOf(t)}px` },
+      midnight ? d.toLocaleDateString('de-DE', { weekday: 'short' }) + ' ' + fmtTime(t) : fmtTime(t)));
+  }
+  const rows = el('div', { class: 'eg-rows', style: `width:${width}px` });
+  const now = Date.now() / 1000;
+  if (now > from && now < to) {
+    rows.append(el('div', { class: 'eg-now', style: `left:${EG.chW + xOf(now)}px` }));
+    head.append(el('div', { class: 'eg-now head', style: `left:${EG.chW + xOf(now)}px` }));
+  }
+  const sentinel = el('div', { class: 'eg-sentinel' });
+  const scroller = el('div', { class: 'epg-grid', id: 'egScroll' }, head, rows, sentinel);
+  list.append(bar, scroller);
+  state.grid.rowsEl = rows;
+  if (!items.length) { rows.append(el('div', { class: 'empty' }, 'Keine Sender in dieser Kategorie.')); return; }
+
+  if (gridObserver) gridObserver.disconnect();
+  gridObserver = new IntersectionObserver((en) => { if (en[0].isIntersecting) gridMore(); }, { root: scroller, rootMargin: '400px' });
+  gridObserver.observe(sentinel);
+  gridMore();
+  if (!day) requestAnimationFrame(scrollGridToNow);
+}
+
+async function gridMore() {
+  const g = state.grid;
+  if (!g || !state.gridMode || g.busy || g.next >= g.items.length) return;
+  g.busy = true;
+  const chunk = g.items.slice(g.next, g.next + EG.chunk);
+  g.next += chunk.length;
+  const tracks = new Map();
+  const frag = document.createDocumentFragment();
+  for (const it of chunk) {
+    const track = el('div', { class: 'eg-track' });
+    frag.append(el('div', { class: 'eg-row', 'data-sid': it.stream_id },
+      el('div', { class: 'eg-ch', title: it.name, onclick: () => gridPlay(it) },
+        el('span', { class: 'num' }, it.num || ''), img(it.stream_icon, 'logo', it.name), el('span', { class: 'eg-name' }, it.name)),
+      track));
+    if (!it.epg_channel_id) { track.append(el('div', { class: 'eg-empty' }, 'Kein Programm')); continue; }
+    const k = String(it.epg_channel_id);
+    if (!tracks.has(k)) tracks.set(k, []);
+    tracks.get(k).push({ track, it });
+  }
+  g.rowsEl.append(frag);
+  markGridPlaying();
+  try {
+    const r = await localApi('POST', '/epg/grid?account=' + encodeURIComponent(accountKey()), { channels: [...tracks.keys()], from: g.from, to: g.to });
+    if (state.grid !== g) return;
+    for (const [k, list] of tracks) for (const { track, it } of list) fillTrack(track, it, r.progs[k] || []);
+    const info = $('#egInfo');
+    if (info) info.textContent = guideInfoText(r);
+  } catch (err) {
+    for (const list of tracks.values()) for (const { track } of list) track.append(el('div', { class: 'eg-empty' }, 'Fehler: ' + err.message));
+  } finally {
+    g.busy = false;
+  }
+  const sc = $('#egScroll');
+  if (sc && state.grid === g && sc.scrollTop + sc.clientHeight + 400 >= sc.scrollHeight) gridMore();
+}
+
+function fillTrack(track, it, progs) {
+  const g = state.grid;
+  const now = Date.now() / 1000;
+  if (!progs.length) { track.append(el('div', { class: 'eg-empty' }, 'Kein Programm')); return; }
+  const sorted = [...progs].sort((x, y) => x.s - y.s);
+  sorted.forEach((p, i) => {
+    const nextStart = sorted[i + 1] ? sorted[i + 1].s : Infinity;
+    const s = Math.max(p.s, g.from);
+    const e = Math.min(p.e, g.to, nextStart); // Ueberlappungen kuerzen
+    if (e <= s) return;
+    const w = ((e - s) / 60) * EG.px;
+    const rem = isReminded({ ch: it.epg_channel_id, s: p.s });
+    const cls = p.e <= now ? ' past' : p.s <= now ? ' live' : '';
+    const b = el('div', {
+      class: 'eg-prog' + cls + (rem ? ' rem' : ''),
+      style: `left:${xOf(s)}px;width:${Math.max(3, w - 3)}px`,
+      title: `${fmtTime(p.s)} – ${fmtTime(p.e)}  ${p.t}`,
+    },
+    el('div', { class: 'eg-t' }, (rem ? '🔔 ' : '') + p.t),
+    el('div', { class: 'eg-time' }, `${fmtTime(p.s)} – ${fmtTime(p.e)}`));
+    b.addEventListener('click', () => progClick(it, p, b));
+    track.append(b);
+  });
+}
+
+function progClick(it, p, block) {
+  const now = Date.now() / 1000;
+  if (p.s <= now && p.e > now) { gridPlay(it); return; }
+  const r = { ch: it.epg_channel_id, sid: it.stream_id, name: it.name, title: p.t, s: p.s, e: p.e };
+  const upcoming = p.s > now;
+  const bell = el('button', { class: 'btn' });
+  const drawBell = () => {
+    const on = isReminded(r);
+    bell.textContent = on ? '🔔 Erinnerung entfernen' : '🔔 Erinnern';
+    bell.classList.toggle('on', on);
+    block.classList.toggle('rem', on);
+    block.firstChild.textContent = (on ? '🔔 ' : '') + p.t;
+  };
+  bell.addEventListener('click', () => { toggleReminder(r); drawBell(); });
+  drawBell();
+  $('#detailBody').replaceChildren(
+    detailFrame(null),
+    el('div', { class: 'detail-top' },
+      img(it.stream_icon, 'logo-lg', it.name),
+      el('div', {},
+        el('h2', {}, p.t),
+        p.st ? el('div', { class: 'muted' }, p.st) : null,
+        el('div', { class: 'ep-state' }, `${fmtDay(p.s)} – ${fmtTime(p.e)} · ${it.name}`),
+        el('p', {}, p.d || ''),
+        el('div', { class: 'detail-actions' },
+          upcoming ? bell : null,
+          el('button', { class: 'btn primary', onclick: () => { closeOverlay('detail'); gridPlay(it); } }, '▶ Sender jetzt einschalten')))));
+  openOverlay('detail');
+}
+
+// Jetzt-Linie mitlaufen lassen
+setInterval(() => {
+  if (!state.gridMode || !state.grid) return;
+  const x = EG.chW + xOf(Date.now() / 1000);
+  document.querySelectorAll('.eg-now').forEach((n) => { n.style.left = x + 'px'; });
+}, 60000);
+
 /* ================= Anmeldung ================= */
 
 function normalizeServer(raw) {
@@ -1333,9 +1521,14 @@ function render() {
   state.view = items;
   state.viewKind = kind;
   state.rendered = 0;
+  state.gridMode = false;
   showPreview(kind === 'live' || kind === 'rem');
   $('#listTitle').textContent = title;
   $('#listCount').textContent = items.length + ' Einträge';
+  const vt = $('#viewToggle');
+  vt.classList.toggle('hidden', kind !== 'live');
+  vt.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.view === state.liveView));
+  if (kind === 'live' && state.liveView === 'grid') return renderGrid(items);
   const list = $('#list');
   list.className = 'list ' + (kind === 'live' || kind === 'rem' ? 'rows' : 'grid');
   list.replaceChildren();
@@ -1352,6 +1545,7 @@ function render() {
 }
 
 function renderMore() {
+  if (state.gridMode) return;
   const { view, viewKind: kind } = state;
   const end = Math.min(view.length, state.rendered + PAGE);
   const frag = document.createDocumentFragment();
@@ -1421,6 +1615,8 @@ async function renderSearch() {
   const raw = state.search;
   const tokens = norm(raw).split(' ').filter(Boolean);
   showPreview(state.tab === 'live');
+  state.gridMode = false;
+  $('#viewToggle').classList.add('hidden');
   const list = $('#list');
   list.className = 'list';
   $('#listTitle').textContent = 'Suche: ' + raw;
@@ -2006,6 +2202,7 @@ function playLive(index, retry) {
   document.querySelectorAll('.row').forEach((r) => r.classList.toggle('playing', r.dataset.sid === String(it.stream_id)));
   const row = document.querySelector(`.row[data-sid="${it.stream_id}"]`);
   if (row && inPreview) row.scrollIntoView({ block: 'nearest' });
+  markGridPlaying();
   showEpg(it, role('epg'));
 }
 

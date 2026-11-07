@@ -194,4 +194,17 @@ function channel(cfgDir, account, ch, limit = 30) {
   return st.progs.filter((p) => p.c === ch && p.e > now).slice(0, limit).map(({ nt, nd, ...p }) => p);
 }
 
-module.exports = { ensure, search, channel, storeFor, statusOf, parseTime, decodeXml };
+// Programm mehrerer Sender in einem Zeitfenster (fuer das Programmraster)
+function grid(cfgDir, account, channels, from, to) {
+  const st = storeFor(cfgDir, account);
+  const want = new Set((channels || []).map(String));
+  const out = {};
+  for (const p of st.progs) {
+    if (p.s >= to) break; // nach Startzeit sortiert
+    if (p.e <= from || !want.has(p.c)) continue;
+    (out[p.c] || (out[p.c] = [])).push({ s: p.s, e: p.e, t: p.t, st: p.st, d: p.d });
+  }
+  return { ...statusOf(st), progs: out };
+}
+
+module.exports = { ensure, search, channel, grid, storeFor, statusOf, parseTime, decodeXml };
