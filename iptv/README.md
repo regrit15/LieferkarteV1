@@ -20,6 +20,7 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
   von Hand als gesehen/ungesehen markieren
 - Bereich „Weiter ansehen“: angefangene Filme und je Serie die angefangene bzw. nächste Folge
 - Nach dem Ende einer Folge startet die nächste automatisch (10 Sekunden, abbrechbar)
+- Abgleich zwischen Mac und PC über Google Drive (Fortschritt, Weiter ansehen, Favoriten, Filter)
 - Tasten: Pfeil hoch/runter = Sender wechseln, F = Vollbild, Esc = schließen, / = Suche
 
 ## Einmalige Einrichtung
@@ -36,6 +37,20 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
 Der Browser öffnet sich mit `http://localhost:8080`. Das schwarze Fenster offen lassen,
 solange Sie fernsehen. Schließen beendet die App.
 
+## Abgleich zwischen Mac und PC (Google Drive)
+
+1. Auf beiden Rechnern „Google Drive für den Desktop“ installieren und mit demselben Google-Konto anmelden.
+2. In der App oben auf „Abgleich“ klicken. Meist wird Google Drive automatisch gefunden: „Verwenden“ klicken.
+   Sonst Pfad eintragen, z. B. Mac: `~/Library/CloudStorage/GoogleDrive-<E-Mail>/Meine Ablage`,
+   Windows: `G:\Meine Ablage`.
+3. Auf dem zweiten Rechner genauso.
+
+Die App legt in Google Drive einen Ordner `SportTV` an. Jeder Rechner schreibt seine eigene Datei, daher
+entstehen keine Konflikte. Je Film/Folge gilt der neuere Stand. Abgeglichen wird beim Start, jede Minute,
+nach Änderungen und beim Schließen eines Films. Wie schnell der andere Rechner es sieht, hängt von
+Google Drive ab (meist Sekunden bis wenige Minuten). Das Passwort wird nicht in Google Drive gespeichert.
+Die Einstellung liegt im Benutzerordner unter `.sporttv` und bleibt bei App-Updates erhalten.
+
 ## Warum ein kleiner lokaler Server?
 
 Browser dürfen Xtream-Server meist nicht direkt abfragen (CORS, unverschlüsseltes HTTP).
@@ -44,7 +59,7 @@ Browser dürfen Xtream-Server meist nicht direkt abfragen (CORS, unverschlüssel
 
 ## Hinweise
 
-- Zugangsdaten, Favoriten, Filter und Fortschritt werden nur im Browser auf diesem Rechner gespeichert.
+- Zugangsdaten werden nur im Browser auf diesem Rechner gespeichert. Favoriten, Filter und Fortschritt ebenfalls, zusätzlich in Google Drive, wenn der Abgleich eingerichtet ist.
 - Bleibt ein Sender schwarz, „Format“ im Player drücken (wechselt zwischen HLS und TS).
 - Manche Filme liegen als MKV vor; diese spielt nicht jeder Browser ab. Dann „Link kopieren“
   und in VLC öffnen (VLC: Medien → Netzwerkstream öffnen).

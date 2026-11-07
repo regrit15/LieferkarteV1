@@ -284,6 +284,14 @@ mark { background: rgba(61, 189, 112, .35); color: inherit; border-radius: 2px; 
 .card-info { background: none; border: none; padding: 0; color: var(--accent-2); cursor: pointer; font-size: 12px; }
 .card-info:hover { text-decoration: underline; }
 
+/* Abgleich */
+.sync-status { margin-top: 14px; padding: 12px; border-radius: 8px; background: var(--panel-2); border-left: 3px solid var(--muted); display: flex; flex-direction: column; gap: 3px; word-break: break-all; }
+.sync-status.ok { border-left-color: var(--accent); }
+.sync-row { display: flex; gap: 8px; }
+.sync-row input { flex: 1; }
+.f-row { gap: 10px; word-break: break-all; }
+.btn.sync-err { border-color: var(--error); color: var(--error); }
+
 /* Naechste Folge */
 .nextup {
   position: absolute; right: 16px; bottom: 60px; z-index: 5; width: min(460px, calc(100% - 32px));

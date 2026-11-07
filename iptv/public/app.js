@@ -205,9 +205,13 @@ function loadKind(kind) {
 
 function loadFilter() {
   const f = store('filter:' + accountKey()) || {};
-  state.filter = { tags: f.tags || [], cats: { live: [], vod: [], series: [], ...(f.cats || {}) } };
+  state.filter = { tags: f.tags || [], cats: { live: [], vod: [], series: [], ...(f.cats || {}) }, t: f.t || 0 };
 }
-const saveFilter = () => store('filter:' + accountKey(), state.filter);
+function saveFilter(touch = true) {
+  if (touch) state.filter.t = Date.now();
+  store('filter:' + accountKey(), state.filter);
+  if (touch) schedulePush(2000);
+}
 
 function catVisible(kind, catId) {
   if (state.filter.cats[kind].includes(catId)) return false;
@@ -232,7 +236,7 @@ function updateFilterButton() {
 }
 
 function filterChanged() {
-  saveFilter();
+  saveFilter(true);
   updateFilterButton();
   if (state.tab !== 'fav') {
     const d = state.data[state.tab];
@@ -323,12 +327,13 @@ function drawFilter() {
 }
 
 $('#filterBtn').addEventListener('click', openFilter);
+$('#syncBtn').addEventListener('click', openSync);
 
 /* ================= Favoriten ================= */
 
 function loadFavs() {
   const f = store('favs:' + accountKey()) || {};
-  state.favs = { live: f.live || [], vod: f.vod || [], series: f.series || [] };
+  state.favs = { live: f.live || [], vod: f.vod || [], series: f.series || [], t: f.t || 0 };
 }
 
 const isFav = (kind, id) => state.favs[kind].some((f) => f.id === id);
@@ -342,7 +347,9 @@ function toggleFav(kind, it) {
     const { _n, _x, _tag, ...plain } = it;
     list.push({ id, item: plain });
   }
+  state.favs.t = Date.now();
   store('favs:' + accountKey(), state.favs);
+  schedulePush(2000);
   toast(idx >= 0 ? 'Aus Favoriten entfernt' : 'Zu Favoriten hinzugefügt');
   if (state.tab === 'fav') { renderSidebar(); render(); }
   return idx < 0;
@@ -386,6 +393,7 @@ function loadProgress() {
 function saveProgress() {
   store('prog:' + accountKey(), state.prog);
   store('seriesprog:' + accountKey(), state.seriesProg);
+  schedulePush(20000);
 }
 
 const getProg = (kind, id) => state.prog[kind + ':' + id];
@@ -537,6 +545,204 @@ async function playSeriesEpisode(series, epId) {
   }
 }
 
+/* ================= Abgleich zwischen Rechnern (Google Drive) ================= */
+
+const sync = { status: null, busy: false, last: 0, error: '', pushTimer: null, pushDue: 0, applying: false };
+
+async function syncApi(method, route, body) {
+  const res = await fetch('/sync/' + route, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-SportTV': '1' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Fehler ' + res.status);
+  return data;
+}
+
+const syncOn = () => !!(sync.status && sync.status.configured && state.creds);
+
+function localPayload() {
+  return { v: 1, t: Date.now(), prog: state.prog, seriesProg: state.seriesProg, favs: state.favs, filter: state.filter };
+}
+
+function unionById(a, b) {
+  const seen = new Set(a.map((x) => x.id));
+  return [...a, ...b.filter((x) => !seen.has(x.id))];
+}
+
+// fremde Daten einarbeiten: je Film/Folge gilt der neuere Stand; Favoriten/Filter als Ganzes
+function mergePayload(d) {
+  if (!d || typeof d !== 'object') return { changed: false };
+  let changed = false;
+  let filterChanged = false;
+  for (const [k, v] of Object.entries(d.prog || {})) {
+    const l = state.prog[k];
+    if (v && (!l || (v.t || 0) > (l.t || 0))) { state.prog[k] = v; changed = true; }
+  }
+  for (const [k, v] of Object.entries(d.seriesProg || {})) {
+    const l = state.seriesProg[k];
+    if (v && (!l || (v.t || 0) > (l.t || 0))) { state.seriesProg[k] = v; changed = true; }
+  }
+  const rf = d.favs;
+  if (rf) {
+    if ((rf.t || 0) > (state.favs.t || 0)) {
+      state.favs = { live: rf.live || [], vod: rf.vod || [], series: rf.series || [], t: rf.t };
+      changed = true;
+    } else if (!rf.t && !state.favs.t) {
+      for (const k of KINDS) {
+        const u = unionById(state.favs[k], rf[k] || []);
+        if (u.length !== state.favs[k].length) { state.favs[k] = u; changed = true; }
+      }
+    }
+  }
+  const rfi = d.filter;
+  if (rfi && (rfi.t || 0) > (state.filter.t || 0)) {
+    state.filter = { tags: rfi.tags || [], cats: { live: [], vod: [], series: [], ...(rfi.cats || {}) }, t: rfi.t };
+    changed = true;
+    filterChanged = true;
+  }
+  return { changed, filterChanged };
+}
+
+async function syncNow(manual) {
+  if (!syncOn() || sync.busy) return;
+  sync.busy = true;
+  clearTimeout(sync.pushTimer);
+  sync.pushTimer = null;
+  updateSyncButton();
+  const acc = encodeURIComponent(accountKey());
+  try {
+    const r = await syncApi('GET', 'data?account=' + acc);
+    let changed = false;
+    let filterChanged = false;
+    for (const f of r.files || []) {
+      if (f.device === r.device) continue;
+      const m = mergePayload(f.data);
+      changed = changed || m.changed;
+      filterChanged = filterChanged || m.filterChanged;
+    }
+    if (changed) {
+      sync.applying = true;
+      store('prog:' + accountKey(), state.prog);
+      store('seriesprog:' + accountKey(), state.seriesProg);
+      store('favs:' + accountKey(), state.favs);
+      saveFilter(false);
+      sync.applying = false;
+      refreshAfterSync(filterChanged);
+    }
+    await syncApi('PUT', 'data?account=' + acc, localPayload());
+    sync.last = Date.now();
+    sync.error = '';
+    if (manual) toast(changed ? 'Abgeglichen, Änderungen übernommen' : 'Abgeglichen, alles aktuell');
+  } catch (err) {
+    sync.error = err.message;
+    if (manual) toast('Abgleich fehlgeschlagen: ' + err.message);
+  } finally {
+    sync.busy = false;
+    updateSyncButton();
+    if (!$('#syncDlg').classList.contains('hidden')) drawSync();
+  }
+}
+
+// Hochladen gebuendelt: Favoriten/Filter nach 2 s, Wiedergabe hoechstens alle 20 s
+function schedulePush(ms) {
+  if (!syncOn() || sync.applying) return;
+  const due = Date.now() + ms;
+  if (sync.pushTimer && sync.pushDue <= due) return;
+  clearTimeout(sync.pushTimer);
+  sync.pushDue = due;
+  sync.pushTimer = setTimeout(() => { sync.pushTimer = null; syncNow(false); }, ms);
+}
+
+function refreshAfterSync(filterChanged) {
+  updateFilterButton();
+  const overlayOpen = ['player', 'detail', 'filterDlg'].some((id) => !$('#' + id).classList.contains('hidden'));
+  if (overlayOpen || state.search) return;
+  if (filterChanged || ['cont', 'fav'].includes(state.tab)) {
+    renderSidebar();
+    render();
+  }
+}
+
+function updateSyncButton() {
+  const b = $('#syncBtn');
+  if (!b) return;
+  b.classList.toggle('active-filter', syncOn() && !sync.error);
+  b.classList.toggle('sync-err', !!sync.error);
+  b.textContent = !syncOn() ? 'Abgleich' : sync.busy ? 'Abgleich ...' : sync.error ? 'Abgleich: Fehler' : 'Abgleich an';
+  b.title = sync.last ? 'Zuletzt abgeglichen: ' + new Date(sync.last).toLocaleTimeString('de-DE') : '';
+}
+
+async function initSync() {
+  try {
+    sync.status = await syncApi('GET', 'status');
+  } catch {
+    sync.status = null;
+  }
+  updateSyncButton();
+  if (syncOn()) await syncNow(false);
+}
+
+async function openSync() {
+  $('#syncDlg').classList.remove('hidden');
+  $('#syncBody').replaceChildren(el('div', { class: 'empty' }, 'Lade ...'));
+  try { sync.status = await syncApi('GET', 'status'); } catch (err) { sync.error = err.message; }
+  drawSync();
+}
+
+async function setSyncDir(dir) {
+  try {
+    await syncApi('POST', 'config', { dir });
+    sync.status = await syncApi('GET', 'status');
+    sync.error = '';
+    if (dir) await syncNow(true);
+    else toast('Abgleich ausgeschaltet');
+  } catch (err) {
+    toast(err.message);
+  }
+  updateSyncButton();
+  drawSync();
+}
+
+function drawSync() {
+  const st = sync.status || { candidates: [] };
+  const input = el('input', { class: 'search', type: 'text', value: st.dir || '', placeholder: 'Pfad zum Google-Drive-Ordner' });
+  input.style.maxWidth = 'none';
+  const cands = (st.candidates || []).filter((c) => c !== st.dir);
+  $('#syncBody').replaceChildren(
+    el('h2', { style: 'margin:0 0 4px' }, 'Abgleich zwischen Mac und PC'),
+    el('div', { class: 'muted' }, 'Fortschritt, „Weiter ansehen“, Favoriten und Länderfilter werden über einen Ordner in Google Drive abgeglichen. Das Passwort wird dort nicht gespeichert.'),
+    el('div', { class: 'sync-status' + (st.configured ? ' ok' : '') },
+      st.configured
+        ? [el('strong', {}, 'Aktiv'), el('div', { class: 'muted' }, st.dir),
+          el('div', { class: 'muted' }, sync.last ? 'Zuletzt abgeglichen: ' + new Date(sync.last).toLocaleTimeString('de-DE') : 'Noch nicht abgeglichen'),
+          sync.error ? el('div', { class: 'error' }, sync.error) : null]
+        : [el('strong', {}, 'Nicht eingerichtet'), el('div', { class: 'muted' }, 'Auf jedem Rechner einmal den Google-Drive-Ordner wählen.')]),
+    cands.length ? el('div', {},
+      el('h3', { style: 'margin:16px 0 6px' }, 'Gefundenes Google Drive'),
+      ...cands.map((c) => el('div', { class: 'f-row' }, el('span', {}, c), el('button', { class: 'btn primary small', onclick: () => setSyncDir(c) }, 'Verwenden'))))
+      : el('div', { class: 'muted', style: 'margin-top:14px' }, 'Kein Google Drive automatisch gefunden. Bitte Pfad eintragen, z. B. Mac: ~/Library/CloudStorage/GoogleDrive-…/Meine Ablage, Windows: G:\\Meine Ablage'),
+    el('h3', { style: 'margin:16px 0 6px' }, 'Ordner von Hand'),
+    el('div', { class: 'sync-row' }, input, el('button', { class: 'btn', onclick: () => setSyncDir(input.value) }, 'Übernehmen')),
+    el('div', { class: 'f-presets' },
+      st.configured ? el('button', { class: 'btn primary', onclick: () => syncNow(true) }, 'Jetzt abgleichen') : null,
+      st.configured ? el('button', { class: 'btn', onclick: () => setSyncDir('') }, 'Abgleich ausschalten') : null),
+    el('div', { class: 'muted' }, 'Voraussetzung: „Google Drive für den Desktop“ ist auf beiden Rechnern installiert und mit demselben Konto angemeldet.'));
+}
+
+setInterval(() => { if (syncOn() && document.visibilityState === 'visible') syncNow(false); }, 60 * 1000);
+window.addEventListener('focus', () => { if (syncOn() && Date.now() - sync.last > 15000) syncNow(false); });
+window.addEventListener('beforeunload', () => {
+  if (!syncOn()) return;
+  // letzten Stand noch schnell sichern
+  fetch('/sync/data?account=' + encodeURIComponent(accountKey()), {
+    method: 'PUT', keepalive: true,
+    headers: { 'Content-Type': 'application/json', 'X-SportTV': '1' },
+    body: JSON.stringify(localPayload()),
+  }).catch(() => {});
+});
+
 /* ================= Anmeldung ================= */
 
 function normalizeServer(raw) {
@@ -559,6 +765,7 @@ async function login(creds) {
   loadFavs();
   loadFilter();
   loadProgress();
+  initSync();
 }
 
 function showLogin(msg) {
@@ -1207,7 +1414,7 @@ const player = { hls: null, ts: null, current: null, mount: null, saveTimer: 0, 
 const role = (r) => (player.mount ? $(`[data-role="${r}"]`, player.mount) : null);
 
 function stopPlayer() {
-  saveCurrentPos();
+  if (player.current && player.current.kind !== 'live') { saveCurrentPos(); schedulePush(1500); }
   cancelNext();
   if (player.hls) { player.hls.destroy(); player.hls = null; }
   if (player.ts) {
@@ -1473,6 +1680,7 @@ document.addEventListener('keydown', (e) => {
     if (overlayOpen('player')) closeOverlay('player');
     else if (overlayOpen('detail')) closeOverlay('detail');
     else if (overlayOpen('filterDlg')) closeOverlay('filterDlg');
+    else if (overlayOpen('syncDlg')) closeOverlay('syncDlg');
     else if (state.search) { clearSearch(); render(); $('#search').blur(); }
     return;
   }

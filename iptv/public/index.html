@@ -43,6 +43,7 @@
       <button id="filterBtn" class="btn small">Länderfilter</button>
       <div class="account">
         <span id="accountInfo" class="muted"></span>
+        <button id="syncBtn" class="btn small">Abgleich</button>
         <button id="logout" class="btn small">Abmelden</button>
       </div>
     </header>
@@ -120,6 +121,14 @@
     <div class="detail-box">
       <button class="close" data-close="filterDlg" title="Schließen">&times;</button>
       <div id="filterBody"></div>
+    </div>
+  </div>
+
+  <!-- Abgleich -->
+  <div id="syncDlg" class="overlay hidden">
+    <div class="detail-box">
+      <button class="close" data-close="syncDlg" title="Schließen">&times;</button>
+      <div id="syncBody"></div>
     </div>
   </div>
 

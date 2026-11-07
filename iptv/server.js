@@ -1,6 +1,7 @@
 // Lokaler Server fuer die IPTV-Web-App.
 // - liefert die Oberflaeche aus (Ordner "public")
 // - leitet Anfragen an den Xtream-Codes-Server weiter (umgeht CORS/Mixed-Content)
+// - gleicht Fortschritt/Favoriten ueber einen Cloud-Ordner (z. B. Google Drive) zwischen Rechnern ab
 // Laeuft nur auf diesem Rechner (127.0.0.1). Keine externen Abhaengigkeiten, Node.js >= 18.
 
 'use strict';
@@ -8,6 +9,8 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
 const { Readable } = require('stream');
 
 const PORT = Number(process.env.PORT) || 8080;
@@ -24,6 +27,147 @@ const MIME = {
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
 };
+
+/* ---------- Abgleich ueber Cloud-Ordner ---------- */
+
+// Einstellungen liegen im Benutzerordner, damit sie ein App-Update ueberstehen
+const CONFIG_DIR = path.join(os.homedir(), '.sporttv');
+const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+
+function loadConfig() {
+  let cfg = {};
+  try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { /* noch keine */ }
+  if (!cfg.device) {
+    cfg.device = (os.hostname() || 'rechner').replace(/[^A-Za-z0-9-]/g, '').slice(0, 20) + '-' + crypto.randomBytes(3).toString('hex');
+    saveConfig(cfg);
+  }
+  return cfg;
+}
+
+function saveConfig(cfg) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
+}
+
+const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+
+// Google Drive fuer den Desktop suchen (macOS und Windows)
+function driveCandidates() {
+  const out = new Set();
+  const home = os.homedir();
+  const names = ['Meine Ablage', 'My Drive'];
+  if (process.platform === 'darwin') {
+    const cs = path.join(home, 'Library', 'CloudStorage');
+    try {
+      for (const d of fs.readdirSync(cs)) {
+        if (!d.startsWith('GoogleDrive')) continue;
+        for (const n of names) if (isDir(path.join(cs, d, n))) out.add(path.join(cs, d, n));
+      }
+    } catch { /* nicht vorhanden */ }
+  }
+  if (process.platform === 'win32') {
+    for (let c = 68; c <= 90; c++) {
+      const root = String.fromCharCode(c) + ':\\';
+      for (const n of names) if (isDir(root + n)) out.add(root + n);
+    }
+  }
+  for (const d of ['Google Drive', 'GoogleDrive']) {
+    const p = path.join(home, d);
+    if (!isDir(p)) continue;
+    let sub = false;
+    for (const n of names) if (isDir(path.join(p, n))) { out.add(path.join(p, n)); sub = true; }
+    if (!sub) out.add(p);
+  }
+  return [...out];
+}
+
+function accountDir(cfg, account) {
+  const h = crypto.createHash('sha1').update(String(account)).digest('hex').slice(0, 16);
+  return path.join(cfg.dir, 'SportTV', h);
+}
+
+function readBody(req, limit = 5 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) { reject(new Error('Daten zu gross')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new Error('Ungueltige Daten')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+async function handleSync(req, res, u) {
+  // Schutz: nur Aufrufe der eigenen Oberflaeche (fremde Webseiten koennen diesen Header nicht setzen)
+  if (req.headers['x-sporttv'] !== '1') return sendJson(res, 403, { error: 'Nicht erlaubt' });
+  const origin = req.headers.origin;
+  if (origin && origin !== 'http://' + req.headers.host) return sendJson(res, 403, { error: 'Nicht erlaubt' });
+
+  const cfg = loadConfig();
+  const route = u.pathname.slice('/sync/'.length);
+
+  if (route === 'status' && req.method === 'GET') {
+    return sendJson(res, 200, { configured: !!cfg.dir && isDir(cfg.dir), dir: cfg.dir || '', device: cfg.device, candidates: driveCandidates() });
+  }
+
+  if (route === 'config' && req.method === 'POST') {
+    const body = await readBody(req);
+    if (!body.dir) {
+      delete cfg.dir;
+      saveConfig(cfg);
+      return sendJson(res, 200, { configured: false });
+    }
+    const dir = path.resolve(String(body.dir).trim().replace(/^~(?=$|[\\/])/, os.homedir()));
+    if (!isDir(dir)) return sendJson(res, 400, { error: 'Ordner nicht gefunden: ' + dir });
+    try {
+      fs.mkdirSync(path.join(dir, 'SportTV'), { recursive: true });
+      const probe = path.join(dir, 'SportTV', '.schreibtest');
+      fs.writeFileSync(probe, 'ok');
+      fs.unlinkSync(probe);
+    } catch (err) {
+      return sendJson(res, 400, { error: 'Ordner nicht beschreibbar: ' + err.message });
+    }
+    cfg.dir = dir;
+    saveConfig(cfg);
+    return sendJson(res, 200, { configured: true, dir, device: cfg.device });
+  }
+
+  if (route === 'data') {
+    if (!cfg.dir || !isDir(cfg.dir)) return sendJson(res, 409, { error: 'Abgleich nicht eingerichtet' });
+    const account = u.searchParams.get('account') || '';
+    if (!account) return sendJson(res, 400, { error: 'Konto fehlt' });
+    const dir = accountDir(cfg, account);
+
+    if (req.method === 'GET') {
+      const files = [];
+      let names = [];
+      try { names = fs.readdirSync(dir); } catch { /* noch leer */ }
+      for (const n of names) {
+        if (!n.endsWith('.json') || n.startsWith('.')) continue;
+        try {
+          files.push({ device: n.slice(0, -5), data: JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')) });
+        } catch { /* Datei wird evtl. gerade synchronisiert */ }
+      }
+      return sendJson(res, 200, { device: cfg.device, files });
+    }
+
+    if (req.method === 'PUT') {
+      const body = await readBody(req);
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, cfg.device + '.json');
+      const tmp = path.join(dir, '.' + cfg.device + '.tmp');
+      fs.writeFileSync(tmp, JSON.stringify(body));
+      fs.renameSync(tmp, file);
+      return sendJson(res, 200, { ok: true, device: cfg.device });
+    }
+  }
+  return sendJson(res, 404, { error: 'Unbekannt' });
+}
 
 function sendJson(res, status, obj) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -121,6 +265,12 @@ function serveStatic(req, res, pathname) {
 
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://localhost');
+  if (u.pathname.startsWith('/sync/')) {
+    handleSync(req, res, u).catch((err) => {
+      if (!res.headersSent) sendJson(res, 500, { error: err.message });
+    });
+    return;
+  }
   if (u.pathname === '/proxy') {
     handleProxy(req, res, u.searchParams).catch((err) => {
       if (!res.headersSent) sendJson(res, 500, { error: err.message });
