@@ -69,6 +69,8 @@ entstehen keine Konflikte. Je Film/Folge gilt der neuere Stand. Abgeglichen wird
 nach Änderungen und beim Schließen eines Films. Wie schnell der andere Rechner es sieht, hängt von
 Google Drive ab (meist Sekunden bis wenige Minuten). Das Passwort wird nicht in Google Drive gespeichert.
 Die Einstellung liegt im Benutzerordner unter `.sporttv` und bleibt bei App-Updates erhalten.
+Safari und Chrome auf demselben Rechner werden wie zwei Geräte behandelt (je eigene Datei) und
+gleichen sich ebenfalls ab. Anmeldung, Favoriten usw. speichert jeder Browser zunächst für sich.
 
 ## Programmführer
 

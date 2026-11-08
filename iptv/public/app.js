@@ -816,6 +816,13 @@ const sync = { status: null, busy: false, last: 0, error: '', pushTimer: null, p
 
 const syncApi = (method, route, body) => localApi(method, '/sync/' + route, body);
 
+// Kennung dieses Browsers (Safari und Chrome auf demselben Rechner bekommen je eine eigene Abgleich-Datei)
+const CLIENT_ID = (() => {
+  let id = store('clientId');
+  if (!id) { id = Math.random().toString(36).slice(2, 10); store('clientId', id); }
+  return id;
+})();
+
 async function localApi(method, url, body) {
   const res = await fetch(url, {
     method,
@@ -891,7 +898,7 @@ async function syncNow(manual) {
   updateSyncButton();
   const acc = encodeURIComponent(accountKey());
   try {
-    const r = await syncApi('GET', 'data?account=' + acc);
+    const r = await syncApi('GET', 'data?account=' + acc + '&client=' + CLIENT_ID);
     let changed = false;
     let filterChanged = false;
     for (const f of r.files || []) {
@@ -911,7 +918,7 @@ async function syncNow(manual) {
       sync.applying = false;
       refreshAfterSync(filterChanged);
     }
-    await syncApi('PUT', 'data?account=' + acc, localPayload());
+    await syncApi('PUT', 'data?account=' + acc + '&client=' + CLIENT_ID, localPayload());
     sync.last = Date.now();
     sync.error = '';
     if (manual) toast(changed ? 'Abgeglichen, Änderungen übernommen' : 'Abgeglichen, alles aktuell');
@@ -1017,7 +1024,7 @@ window.addEventListener('focus', () => { if (syncOn() && Date.now() - sync.last 
 window.addEventListener('beforeunload', () => {
   if (!syncOn()) return;
   // letzten Stand noch schnell sichern
-  fetch('/sync/data?account=' + encodeURIComponent(accountKey()), {
+  fetch('/sync/data?account=' + encodeURIComponent(accountKey()) + '&client=' + CLIENT_ID, {
     method: 'PUT', keepalive: true,
     headers: { 'Content-Type': 'application/json', 'X-SportTV': '1' },
     body: JSON.stringify(localPayload()),

@@ -201,6 +201,9 @@ async function handleSync(req, res, u) {
     const account = u.searchParams.get('account') || '';
     if (!account) return sendJson(res, 400, { error: 'Konto fehlt' });
     const dir = accountDir(cfg, account);
+    // je Browser eine eigene Datei (Safari und Chrome auf demselben Rechner ueberschreiben sich sonst)
+    const client = String(u.searchParams.get('client') || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12);
+    const deviceId = cfg.device + (client ? '-' + client : '');
 
     if (req.method === 'GET') {
       const files = [];
@@ -212,17 +215,17 @@ async function handleSync(req, res, u) {
           files.push({ device: n.slice(0, -5), data: JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')) });
         } catch { /* Datei wird evtl. gerade synchronisiert */ }
       }
-      return sendJson(res, 200, { device: cfg.device, files });
+      return sendJson(res, 200, { device: deviceId, files });
     }
 
     if (req.method === 'PUT') {
       const body = await readBody(req);
       fs.mkdirSync(dir, { recursive: true });
-      const file = path.join(dir, cfg.device + '.json');
-      const tmp = path.join(dir, '.' + cfg.device + '.tmp');
+      const file = path.join(dir, deviceId + '.json');
+      const tmp = path.join(dir, '.' + deviceId + '.tmp');
       fs.writeFileSync(tmp, JSON.stringify(body));
       fs.renameSync(tmp, file);
-      return sendJson(res, 200, { ok: true, device: cfg.device });
+      return sendJson(res, 200, { ok: true, device: deviceId });
     }
   }
   return sendJson(res, 404, { error: 'Unbekannt' });
