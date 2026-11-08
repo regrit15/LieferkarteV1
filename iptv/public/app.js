@@ -2843,6 +2843,7 @@ function stopPlayer() {
 function setMsg(msg, action) {
   const m = role('msg');
   if (!m) return;
+  m.classList.remove('info');
   m.replaceChildren(msg || '');
   if (action) m.append(' ', el('button', { class: 'btn small', onclick: action.fn }, action.label));
 }
@@ -2870,6 +2871,7 @@ function startEngine(url, ext, live, current, rawSrc) {
   player.startT = null;
   setMsg('');
   video.autoplay = !live; // Live: Start erst nach Vorlauf (startPrebuffer)
+  video.controls = true; // im Kompatibilitaetsmodus durch eigene Steuerung ersetzt (showCompatBar)
   const src = rawSrc || proxied(url);
 
   if (ext === 'm3u8') {
@@ -3330,6 +3332,7 @@ async function startCompat(cur, start) {
   player.compatSess = sess.id;
   cur.offset = st;
   showCompatBar(cur);
+  setTimeout(() => { const m = role('msg'); if (m && /^Kompatibilitätsmodus aktiv/.test(m.textContent)) m.classList.add('info'); }, 0);
   setMsg(`Kompatibilitätsmodus aktiv (${[pr.container, pr.video, pr.audio && pr.audio[0] && pr.audio[0].codec].filter(Boolean).join(', ')}${v === 'x264' ? '; Bild wird umgerechnet, braucht mehr Rechenleistung' : ''}).`);
   updateCompatButton(cur);
 }
@@ -3350,25 +3353,73 @@ const fmtClock = (sec) => {
 };
 
 // eigene Zeitleiste, weil der umgewandelte Datenstrom keine Gesamtlaenge kennt
+// Springen: innerhalb des schon umgewandelten Bereichs direkt, sonst Umwandlung ab der Stelle neu starten
+function compatSeek(cur, t) {
+  const target = Math.max(0, Math.min(t, (cur.duration || t + 1) - 1));
+  const rel = target - (cur.offset || 0);
+  const b = video.buffered;
+  for (let i = 0; i < b.length; i++) {
+    if (rel >= b.start(i) && rel <= b.end(i) - 0.5) { video.currentTime = rel; return; }
+  }
+  startCompat(cur, target);
+}
+
+const SVGI = (d) => { const sp = document.createElement('span'); sp.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`; return sp.firstChild; };
+const IC_PLAY = '<path d="M7 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 7 4.5Z" fill="currentColor" stroke="none"/>';
+const IC_PAUSE = '<rect x="6" y="4.5" width="4" height="15" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="4.5" width="4" height="15" rx="1" fill="currentColor" stroke="none"/>';
+const IC_VOL = '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="none"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>';
+const IC_MUTE = '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="none"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>';
+const IC_FULL = '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>';
+
+// eigene Steuerung im Kompatibilitaetsmodus: der Browser kennt dort die Gesamtlaenge nicht
 function showCompatBar(cur) {
   const slot = role('slot');
   if (!slot) return;
-  const pos = el('span', { class: 'cb-time' }, fmtClock(cur.offset));
-  const dur = el('span', { class: 'cb-time' }, cur.duration ? fmtClock(cur.duration) : '--:--');
-  const range = el('input', { type: 'range', min: 0, max: Math.max(1, Math.floor(cur.duration || 1)), step: 1, value: cur.offset, disabled: !cur.duration });
+  video.controls = false;
+  const total = cur.duration || 0;
+  const play = el('button', { class: 'cb-btn', title: 'Abspielen / Pause (Leertaste)' });
+  const setPlayIcon = () => play.replaceChildren(SVGI(video.paused ? IC_PLAY : IC_PAUSE));
+  setPlayIcon();
+  play.addEventListener('click', () => (video.paused ? video.play().catch(() => {}) : video.pause()));
+  const back = el('button', { class: 'cb-btn txt', title: '30 Sekunden zurück', onclick: () => compatSeek(cur, curPos() - 30) }, '−30');
+  const fwd = el('button', { class: 'cb-btn txt', title: '30 Sekunden vor', onclick: () => compatSeek(cur, curPos() + 30) }, '+30');
+  const time = el('span', { class: 'cb-time' });
+  const ends = el('span', { class: 'cb-ends' });
+  const range = el('input', { type: 'range', min: 0, max: Math.max(1, Math.floor(total || 1)), step: 1, value: cur.offset, disabled: !total, title: 'Zeitleiste' });
   let dragging = false;
-  range.addEventListener('input', () => { dragging = true; pos.textContent = fmtClock(range.value); });
-  range.addEventListener('change', () => { dragging = false; startCompat(cur, Number(range.value)); });
-  const back = el('button', { class: 'btn small', title: '30 Sekunden zurück', onclick: () => startCompat(cur, Math.max(0, curPos() - 30)) }, '−30 s');
-  const fwd = el('button', { class: 'btn small', title: '30 Sekunden vor', onclick: () => startCompat(cur, curPos() + 30) }, '+30 s');
-  const bar = el('div', { class: 'cbar' }, back, pos, range, dur, fwd);
+  range.addEventListener('input', () => { dragging = true; time.textContent = `${fmtClock(range.value)} / ${total ? fmtClock(total) : '--:--'}`; });
+  range.addEventListener('change', () => { dragging = false; compatSeek(cur, Number(range.value)); });
+  const mute = el('button', { class: 'cb-btn', title: 'Ton aus/an' });
+  const setVolIcon = () => mute.replaceChildren(SVGI(video.muted || video.volume === 0 ? IC_MUTE : IC_VOL));
+  setVolIcon();
+  mute.addEventListener('click', () => { video.muted = !video.muted; setVolIcon(); });
+  const vol = el('input', { type: 'range', class: 'cb-vol', min: 0, max: 1, step: 0.05, value: video.muted ? 0 : video.volume, title: 'Lautstärke' });
+  vol.addEventListener('input', () => { video.volume = Number(vol.value); video.muted = video.volume === 0; setVolIcon(); });
+  const full = el('button', { class: 'cb-btn', title: 'Vollbild (F)', onclick: () => goFullscreen() }, SVGI(IC_FULL));
+  const bar = el('div', { class: 'cbar' },
+    el('div', { class: 'cb-row' }, range),
+    el('div', { class: 'cb-row' }, play, back, fwd, time, ends, el('span', { class: 'cb-grow' }), mute, vol, full));
   bar._update = () => {
-    if (dragging || player.current !== cur) return;
-    range.value = Math.floor(curPos());
-    pos.textContent = fmtClock(curPos());
+    if (player.current !== cur) return;
+    const p = curPos();
+    if (!dragging) {
+      range.value = Math.floor(p);
+      time.textContent = `${fmtClock(p)} / ${total ? fmtClock(total) : '--:--'}`;
+    }
+    ends.textContent = total ? 'endet um ' + new Date(Date.now() + Math.max(0, total - p) * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '';
+    setPlayIcon();
   };
+  bar._update();
   slot.append(bar);
 }
+
+// Klick ins Bild = Pause/Weiter, Doppelklick = Vollbild (nur Kompatibilitaetsmodus, sonst eigene Browser-Steuerung)
+video.addEventListener('click', () => {
+  if (!player.current || player.current.mode !== 'compat') return;
+  if (video.paused) video.play().catch(() => {}); else video.pause();
+});
+video.addEventListener('dblclick', () => { if (player.current && player.current.mode === 'compat') goFullscreen(); });
+for (const ev of ['play', 'pause']) video.addEventListener(ev, () => { const cb = document.querySelector('.cbar'); if (cb && cb._update) cb._update(); });
 
 async function fileError(cur) {
   const ff = await ffStatus();
@@ -3619,6 +3670,14 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'PageDown') { e.preventDefault(); stepChannel(1); }
   }
   if (player.current && e.key.toLowerCase() === 'f') goFullscreen();
+  if (e.key === ' ' && player.current && player.current.mode === 'compat') {
+    e.preventDefault();
+    if (video.paused) video.play().catch(() => {}); else video.pause();
+  }
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && player.current && player.current.mode === 'compat') {
+    e.preventDefault();
+    compatSeek(player.current, curPos() + (e.key === 'ArrowLeft' ? -10 : 10));
+  }
   if (e.key.toLowerCase() === 'i' && state.playback) { state.playback.stats = !state.playback.stats; savePlayback(); }
   if (e.key.toLowerCase() === 'z' || e.key === 'Backspace') {
     if (player.lastLive) { e.preventDefault(); jumpBack(); }
