@@ -29,14 +29,14 @@ async function search(p, q) { await p.fill('#search', q); await p.waitForTimeout
   await p.waitForFunction(() => document.querySelector('#preview [data-role=title]').textContent.includes('SD'));
   log('Nach Wechsel auf SD:', await title(p));
   await p.keyboard.press('Escape');
-  await p.click('#filterBtn');
+  await p.evaluate(() => openFilter());
   await p.waitForSelector('.f-item');
   log('Filter-Dialog:', (await p.locator('text=Varianten ausgeblendet').textContent()));
   await p.locator('label', { hasText: 'Nur eine Variante je Sender zeigen' }).locator('input').uncheck();
   await p.keyboard.press('Escape');
   await search(p, 'sky sport 1');
   log('Ohne Zusammenfassen:', await p.locator('.row .name').allTextContents());
-  await p.click('#filterBtn');
+  await p.evaluate(() => openFilter());
   await p.locator('label', { hasText: 'Nur eine Variante je Sender zeigen' }).locator('input').check();
   await p.keyboard.press('Escape');
   await p.keyboard.press('Escape');

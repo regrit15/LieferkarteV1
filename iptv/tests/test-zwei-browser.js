@@ -11,7 +11,7 @@ async function open(b) {
 (async () => {
   const b = await chromium.launch();
   const A = await open(b);
-  await A.click('#syncBtn'); await A.fill('#syncBody .sync-row input', DRIVE); await A.click('#syncBody .sync-row .btn');
+  await A.evaluate(() => openSync()); await A.fill('#syncBody .sync-row input', DRIVE); await A.click('#syncBody .sync-row .btn');
   await A.waitForSelector('#syncBody .sync-status.ok'); await A.keyboard.press('Escape');
   const B = await open(b);   // zweiter Browser: Abgleich ist schon eingerichtet (Einstellung liegt im Server)
   await A.click('.rail [data-tab=live]'); await A.waitForSelector('.main .row'); await A.click('.cat[data-cat="__all"]');

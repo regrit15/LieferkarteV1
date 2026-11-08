@@ -19,7 +19,7 @@ const { chromium } = require('playwright');
   await p.waitForFunction(() => document.querySelector('.variants .btn.primary') && document.querySelector('.variants .btn.primary').textContent.startsWith('4K'));
   console.log('Gewaehlt:', await p.textContent('.variants .btn.primary'), '| Titel:', await p.textContent('#detailBody h2'));
   await p.keyboard.press('Escape');
-  await p.click('#filterBtn'); await p.locator('label', { hasText: 'Nur eine Variante je Sender zeigen' }).locator('input').uncheck(); await p.keyboard.press('Escape');
+  await p.evaluate(() => openFilter()); await p.locator('label', { hasText: 'Nur eine Variante je Sender zeigen' }).locator('input').uncheck(); await p.keyboard.press('Escape');
   console.log('Ohne Zusammenfassen:', (await p.locator('.main .card .title').allTextContents()).filter((t) => t.includes('Drama')));
   console.log('Seitenfehler:', errs);
   await b.close();

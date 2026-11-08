@@ -42,6 +42,15 @@ Läuft lokal auf Ihrem Mac oder Windows-PC im Browser (Chrome, Edge, Safari, Fir
 - Abgleich zwischen Mac und PC über Google Drive (Fortschritt, Weiter ansehen, Favoriten, Filter)
 - Tasten: Pfeil hoch/runter = Sender wechseln, Z = letzter Sender, F = Vollbild, Esc = schließen, / = Suche
 
+## Einstellungen
+
+Zahnrad unten in der Symbolleiste: Qualität (z. B. Filme und Serien erst ab 1080p), Länder,
+Sprachen & Doppelte, Live TV & Wiedergabe, Erinnerungen, IMDb, Abgleich Mac & PC, Konto
+(mit Abmelden), Info & Diagnose. Die Qualität erkennt die App an Angaben in Name und Kategorie
+(4K, UHD, 1080p, Bluray, 720p, SD …); beim Öffnen eines Films merkt sie sich zusätzlich die
+echte Auflösung, falls der Anbieter sie liefert. Titel ohne erkennbare Qualität bleiben sichtbar
+(abschaltbar).
+
 ## Einmalige Einrichtung
 
 1. Node.js (LTS-Version) installieren: https://nodejs.org

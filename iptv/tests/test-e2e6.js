@@ -35,7 +35,7 @@ async function search(p, q) { await p.fill('#search', q); await p.waitForTimeout
 
   // Filter: Nur Deutsch -> franzoesischer Treffer verschwindet
   await p.keyboard.press('Escape');
-  await p.click('#filterBtn');
+  await p.evaluate(() => openFilter());
   await p.click('text=Nur Deutsch (DE, AT, CH)');
   await p.keyboard.press('Escape');
   await search(p, 'bayern');

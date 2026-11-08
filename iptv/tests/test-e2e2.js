@@ -52,7 +52,7 @@ const log = (...a) => console.log(...a);
   await p.keyboard.press('Escape');
 
   // Laenderfilter
-  await p.click('#filterBtn');
+  await p.evaluate(() => openFilter());
   await p.waitForSelector('.f-item');
   log('Erkannte Laender:', (await p.locator('.f-item .code').allTextContents()).join(' '));
   await p.screenshot({ path: SHOT + '3-filter.png' });
@@ -107,7 +107,7 @@ const log = (...a) => console.log(...a);
   await p.reload();
   await p.waitForSelector('.tiles .tile'); await p.click('.rail [data-tab=live]'); await p.waitForSelector('.main .row');
   log('Nach Neuladen:', await p.textContent('#filterBtn'));
-  await p.click('#filterBtn');
+  await p.evaluate(() => openFilter());
   await p.click('text=Alle Länder zeigen');
   await p.keyboard.press('Escape');
   await p.click('[data-tab=live]');

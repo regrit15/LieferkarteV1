@@ -312,6 +312,7 @@ function loadKind(kind) {
         it._year = yearOf(it);
         it._added = Number(it.added || it.last_modified) || 0;
         it._gk = norm(displayName(it.name)) + '|' + (it._year || '');
+        it._qv = guessQuality(it.name + ' ' + ((catById[it.category_id] || {}).category_name || ''));
       }
     }
     const byId = new Map(itemList.map((it) => [itemId(kind, it), it]));
@@ -330,6 +331,7 @@ function loadFilter() {
   state.filter = {
     tags: f.tags || [], cats: { live: [], vod: [], series: [], ...(f.cats || {}) }, t: f.t || 0,
     dedupe: f.dedupe !== false, quality: f.quality || 'fhd',
+    minQ: Number(f.minQ) || 0, showUnknownQ: f.showUnknownQ !== false,
   };
 }
 function saveFilter(touch = true) {
@@ -346,7 +348,48 @@ function catVisible(kind, catId) {
 
 function baseVisible(kind, it) {
   if (!catVisible(kind, it.category_id)) return false;
+  if (kind !== 'live' && !qualityOk(kind, it)) return false;
   return !(it._tag && state.filter.tags.includes(it._tag));
+}
+
+/* ---------- Qualitaet von Filmen/Serien (Name + Kategorie, genauer aus den Details) ---------- */
+// 4 = 4K, 3 = 1080p, 2 = 720p, 1 = SD, 0 = unbekannt
+const QLABEL = { 4: '4K', 3: '1080p', 2: '720p', 1: 'SD' };
+function guessQuality(text) {
+  const t = norm(supText(text));
+  if (/\b(4k|uhd|2160p?|ultra ?hd|8k)\b/.test(t)) return 4;
+  if (/\b(1080[pi]?|fhd|full ?hd|blu ?ray|bdrip|brrip|bd ?remux|remux)\b/.test(t)) return 3;
+  if (/\b720p?\b/.test(t)) return 2;
+  if (/\b(sd|480p?|576p?|dvdrip|dvd ?rip|xvid|divx|cam|hdcam|telesync|tsrip)\b/.test(t)) return 1;
+  return 0;
+}
+function qualityFromRes(w, h) {
+  w = Number(w) || 0; h = Number(h) || 0;
+  if (!w && !h) return 0;
+  if (w >= 3000 || h >= 2000) return 4;
+  if (w >= 1800 || h >= 1000) return 3;
+  if (w >= 1200 || h >= 700) return 2;
+  return 1;
+}
+function qualityOf2(kind, it) {
+  const exact = state.res && state.res[kind + ':' + itemId(kind, it)];
+  return exact || it._qv || 0;
+}
+function qualityOk(kind, it) {
+  const min = state.filter.minQ || 0;
+  if (!min) return true;
+  const q = qualityOf2(kind, it);
+  if (!q) return state.filter.showUnknownQ !== false;
+  return q >= min;
+}
+function rememberRes(kind, it, video) {
+  if (!video) return 0;
+  const q = qualityFromRes(video.width, video.height);
+  if (!q) return 0;
+  state.res = state.res || {};
+  const k = kind + ':' + itemId(kind, it);
+  if (state.res[k] !== q) { state.res[k] = q; store('res:' + accountKey(), state.res); }
+  return q;
 }
 
 function itemVisible(kind, it) {
@@ -875,6 +918,7 @@ function mergePayload(d) {
     state.filter = {
       tags: rfi.tags || [], cats: { live: [], vod: [], series: [], ...(rfi.cats || {}) }, t: rfi.t,
       dedupe: rfi.dedupe !== false, quality: rfi.quality || 'fhd',
+      minQ: Number(rfi.minQ) || 0, showUnknownQ: rfi.showUnknownQ !== false,
     };
     changed = true;
     filterChanged = true;
@@ -1467,6 +1511,7 @@ const home = { timer: null, slides: [], idx: 0, token: 0 };
 
 function showHome(on) {
   const h = $('#home');
+  h.classList.toggle('settings-view', state.tab === 'settings');
   h.classList.toggle('hidden', !on);
   document.querySelector('.main').classList.toggle('hidden', on);
   if (on) showPreview(false);
@@ -1648,6 +1693,120 @@ async function buildHero(hero, token) {
   restart();
 }
 
+/* ================= Einstellungen ================= */
+
+const SICON = {
+  quality: '<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M7.5 9.5v3M7.5 11h2M9.5 9.5v3M12.5 9.5v3h1.5a1.5 1.5 0 0 0 0-3Z"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"/>',
+  play: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5Z" fill="currentColor"/>',
+  bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15Z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  star: '<path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.8Z"/>',
+  cloud: '<path d="M7 18a4 4 0 0 1-.5-8 6 6 0 0 1 11.6 1.5A3.5 3.5 0 0 1 17.5 18Z"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+};
+
+function stile(cls, icon, title, sub, onclick) {
+  const ic = document.createElement('span');
+  ic.className = 's-ic';
+  ic.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${SICON[icon]}</svg>`;
+  return el('button', { class: 'stile ' + cls, onclick }, ic,
+    el('div', { class: 's-txt' }, el('div', { class: 's-title' }, title), el('div', { class: 's-sub' }, sub)),
+    el('span', { class: 's-arrow' }, '›'));
+}
+
+function renderSettings() {
+  const box = $('#home');
+  const minQ = state.filter.minQ || 0;
+  const hidden = hiddenCount();
+  const pb = state.playback || {};
+  const syncTxt = !syncOn() ? 'nicht eingerichtet' : sync.error ? 'Fehler: ' + sync.error : 'aktiv' + (sync.last ? ', zuletzt ' + new Date(sync.last).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '');
+  const i = state.info || {};
+  box.replaceChildren(el('div', { class: 'settings' },
+    el('h1', {}, 'Einstellungen'),
+    el('div', { class: 'muted s-lead' }, 'Alles zu Anzeige, Wiedergabe und Konto'),
+    el('div', { class: 'stiles' },
+      stile('c1', 'quality', 'Qualität', minQ ? `Filme & Serien ab ${QLABEL[minQ]}` : 'Filme & Serien: alle Qualitäten', openQuality),
+      stile('c2', 'globe', 'Länder, Sprachen & Doppelte', hidden ? `${hidden} ausgeblendet` : 'nichts ausgeblendet', openFilter),
+      stile('c3', 'play', 'Live TV & Wiedergabe', `Format ${String(pb.fmt || 'ts').toUpperCase()}, Puffer ${({ normal: 'normal', gross: 'groß', sehrgross: 'sehr groß' })[pb.buffer] || 'groß'}`, openPlayback),
+      stile('c4', 'bell', 'Erinnerungen', `${state.reminders.list.length} gesetzt, Hinweis ${state.reminders.lead ? state.reminders.lead + ' Min. vorher' : 'bei Beginn'}`, () => goTo('live', '__rem')),
+      stile('c5', 'star', 'IMDb-Bewertungen', state.metaCfg && state.metaCfg.hasKey ? 'eingeschaltet' : 'nicht eingerichtet', openImdb),
+      stile('c6', 'cloud', 'Abgleich Mac & PC', syncTxt, openSync),
+      stile('c7', 'user', 'Konto', i.username ? `${i.username}${i.exp_date ? ', gültig bis ' + new Date(Number(i.exp_date) * 1000).toLocaleDateString('de-DE') : ''}` : '', openAccount),
+      stile('c8', 'info', 'Info & Diagnose', 'Programmführer, ffmpeg, Version', openInfo))));
+}
+
+function openQuality() {
+  const f = state.filter;
+  const opts = [[0, 'Alle Qualitäten'], [3, 'Ab 1080p (Full HD und 4K)'], [4, 'Nur 4K']];
+  const radios = opts.map(([v, l]) => {
+    const r = el('input', { type: 'radio', name: 'minq', value: v, checked: (f.minQ || 0) === v });
+    return el('label', { class: 'f-item q-opt' }, r, el('span', {}, l));
+  });
+  const unk = el('input', { type: 'checkbox', checked: f.showUnknownQ !== false });
+  const count = () => {
+    let shown = 0, total = 0;
+    for (const k of ['vod', 'series']) {
+      const d = state.data[k];
+      if (!d) continue;
+      for (const it of d.items) { if (!catVisible(k, it.category_id)) continue; total++; if (qualityOk(k, it)) shown++; }
+    }
+    return `${shown} von ${total} Filmen und Serien sichtbar`;
+  };
+  const info = el('div', { class: 'muted', style: 'margin-top:10px' }, count());
+  const apply = () => {
+    const sel = radios.map((l) => l.querySelector('input')).find((r) => r.checked);
+    f.minQ = Number(sel ? sel.value : 0);
+    f.showUnknownQ = unk.checked;
+    filterChanged();
+    info.textContent = count();
+    if (state.tab === 'settings') renderSettings();
+  };
+  radios.forEach((l) => l.querySelector('input').addEventListener('change', apply));
+  unk.addEventListener('change', apply);
+  $('#qualBody').replaceChildren(
+    el('h2', { style: 'margin:0 0 6px' }, 'Qualität von Filmen und Serien'),
+    el('div', { class: 'muted' }, 'Die Liste des Anbieters enthält keine Auflösung. Die App erkennt die Qualität an Angaben im Namen oder in der Kategorie (z. B. „4K“, „UHD“, „1080p“, „Bluray“, „720p“, „SD“). Öffnen Sie einen Film, merkt sie sich zusätzlich die echte Auflösung, falls der Anbieter sie mitliefert.'),
+    el('div', { class: 'q-opts' }, radios),
+    el('label', { class: 'f-item', style: 'display:inline-flex;margin-top:12px' }, unk, el('span', {}, 'Titel ohne erkennbare Qualität anzeigen (empfohlen)')),
+    info);
+  $('#qualDlg').classList.remove('hidden');
+}
+
+function openAccount() {
+  const i = state.info || {};
+  const row = (k, v) => (v ? el('div', { class: 'f-row' }, el('span', { class: 'muted' }, k), el('span', {}, v)) : null);
+  $('#qualBody').replaceChildren(
+    el('h2', { style: 'margin:0 0 10px' }, 'Konto'),
+    el('div', { class: 'f-hidden' },
+      row('Benutzer', i.username),
+      row('Anbieter', state.creds && state.creds.server),
+      row('Status', i.status),
+      row('Gültig bis', i.exp_date ? new Date(Number(i.exp_date) * 1000).toLocaleDateString('de-DE') : 'unbegrenzt'),
+      row('Gleichzeitige Verbindungen', i.max_connections),
+      row('Aktive Verbindungen', i.active_cons)),
+    el('div', { class: 'f-presets' }, el('button', { class: 'btn', onclick: () => { $('#qualDlg').classList.add('hidden'); $('#logout').click(); } }, 'Abmelden')));
+  $('#qualDlg').classList.remove('hidden');
+}
+
+async function openInfo() {
+  const ff = await ffStatus();
+  let g = guide.status || {};
+  try { g = await localApi('GET', '/epg/status?account=' + encodeURIComponent(accountKey())); } catch { /* alter Stand */ }
+  const row = (k, v) => el('div', { class: 'f-row' }, el('span', { class: 'muted' }, k), el('span', {}, v));
+  const d = (k) => (state.data[k] ? state.data[k].items.length : '…');
+  $('#qualBody').replaceChildren(
+    el('h2', { style: 'margin:0 0 10px' }, 'Info & Diagnose'),
+    el('div', { class: 'f-hidden' },
+      row('Sender / Filme / Serien beim Anbieter', `${d('live')} / ${d('vod')} / ${d('series')}`),
+      row('Programmführer', guideInfoText(g)),
+      row('ffmpeg (Kompatibilitätsmodus)', ff.available ? `vorhanden (${ff.source})` : 'nicht installiert'),
+      row('IMDb-Werte im Speicher dieser Sitzung', String(state.imdb.size)),
+      row('Bekannte Auflösungen', String(Object.keys(state.res || {}).length)),
+      row('Browser-Kennung', CLIENT_ID)));
+  $('#qualDlg').classList.remove('hidden');
+}
+
 /* ================= Anmeldung ================= */
 
 function normalizeServer(raw) {
@@ -1677,6 +1836,7 @@ async function login(creds) {
   loadFavs();
   loadFilter();
   loadProgress();
+  state.res = store('res:' + accountKey()) || {};
   state.recent = store('recent:' + accountKey()) || { list: [], t: 0 };
   state.reminders = { list: [], t: 0, lead: 2, auto: false, ...(store('reminders:' + accountKey()) || {}) };
   initSync();
@@ -1750,8 +1910,9 @@ async function switchTab(tab) {
   store('lastTab', tab);
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
 
-  showHome(tab === 'home');
+  showHome(tab === 'home' || tab === 'settings');
   if (tab === 'home') { renderHome(); return; }
+  if (tab === 'settings') { renderSettings(); return; }
   if (tab === 'fav' || tab === 'cont') {
     const prefix = tab + ':';
     state.cat = state.cat && state.cat.startsWith(prefix) ? state.cat : prefix + (tab === 'fav' ? 'live' : 'all');
@@ -2077,11 +2238,11 @@ function showPreview(on) {
 
 function render() {
   const main = document.querySelector('.main');
-  if (state.tab === 'home') {
+  if (state.tab === 'home' || state.tab === 'settings') {
     if (state.search) { main.classList.add('no-side'); showHome(false); return renderSearch(); }
     main.classList.remove('no-side');
     showHome(true);
-    return renderHome();
+    return state.tab === 'home' ? renderHome() : renderSettings();
   }
   main.classList.remove('no-side');
   if (state.search) return renderSearch();
@@ -2332,8 +2493,9 @@ function posterCard(kind, it, tokens) {
   const card = el('div', { class: 'card', title: it.name, 'data-ik': kind + ':' + itemId(kind, it), onclick: () => (kind === 'series' ? openSeries(it) : openMovie(it)) },
     el('div', { class: 'pwrap' }, img(pic, 'poster', it.name), ...progDecor(pi), im && im.r ? imdbBadge(im) : null, (() => {
       const vars = state.titleVariants && state.titleVariants[kind] && state.titleVariants[kind].get(itemId(kind, it));
-      const has4k = it._4k || (state.filter.dedupe && vars && vars.some((v) => v._4k));
-      return has4k ? el('span', { class: 'b4k' }, '4K') : null;
+      const qs = [qualityOf2(kind, it), ...((state.filter.dedupe && vars) ? vars.map((v) => qualityOf2(kind, v)) : [])];
+      const best = Math.max(...qs, it._4k ? 4 : 0);
+      return best >= 2 ? el('span', { class: 'b4k' + (best === 4 ? ' uhd' : '') }, QLABEL[best]) : null;
     })(),
     (() => {
       const vars = state.filter.dedupe && state.titleVariants && state.titleVariants[kind] && state.titleVariants[kind].get(itemId(kind, it));
@@ -2675,7 +2837,9 @@ async function openMovie(it) {
   try {
     info = (await api('get_vod_info', { vod_id: it.stream_id })).info || {};
   } catch { /* Beschreibung optional */ }
-  const facts = [info.releasedate || info.release_date, info.genre, info.duration]
+  const resQ = rememberRes('vod', it, info.video);
+  const resTxt = info.video && info.video.width ? `${info.video.width}×${info.video.height}` : '';
+  const facts = [info.releasedate || info.release_date, info.genre, info.duration, resQ ? `${QLABEL[resQ]}${resTxt ? ' (' + resTxt + ')' : ''}` : (it._qv ? QLABEL[it._qv] + ' (laut Name)' : '')]
     .filter(Boolean).join(' · ');
   const actions = el('div', { class: 'detail-actions' });
   const state1 = el('div', { class: 'ep-state' });
@@ -2747,6 +2911,11 @@ async function openSeries(it) {
   }
   const info = data.info || {};
   const flat = flatEpisodes(data);
+  { // Aufloesung der ersten Folge als Anhaltspunkt fuer die Serie
+    const eps = data.episodes || {};
+    const first = Object.values(eps).flat()[0];
+    if (first && first.info) rememberRes('series', it, first.info.video);
+  }
   const seasons = [...new Set(flat.map((e) => e.season))];
   const name = info.name || it.name;
   const series = { ...seriesPlain(it, name), cover: it.cover || info.cover || '' };
@@ -3667,6 +3836,7 @@ document.addEventListener('keydown', (e) => {
     else if (overlayOpen('syncDlg')) closeOverlay('syncDlg');
     else if (overlayOpen('imdbDlg')) closeOverlay('imdbDlg');
     else if (overlayOpen('playDlg')) closeOverlay('playDlg');
+    else if (overlayOpen('qualDlg')) closeOverlay('qualDlg');
     else if (state.search) { clearSearch(); render(); $('#search').blur(); }
     return;
   }

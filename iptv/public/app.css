@@ -740,3 +740,33 @@ body { font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Rob
 .video-slot:fullscreen .cbar { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, rgba(0,0,0,.85)); }
 .video-slot.big video { cursor: default; }
 .player-msg.info { color: var(--muted); font-size: 13px; }
+
+/* ---------------- Einstellungen ---------------- */
+.rail-grow { flex: 1; }
+.home.settings-view { margin-top: 0; }
+.settings { padding: 26px 40px 40px; max-width: 1500px; }
+.settings h1 { font-size: 40px; margin: 0; font-weight: 800; }
+.s-lead { font-size: 17px; margin: 6px 0 26px; }
+.stiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
+.stile {
+  display: flex; align-items: center; gap: 16px; padding: 22px 22px; border-radius: 16px; cursor: pointer; text-align: left;
+  border: 1px solid rgba(255,255,255,.1); color: var(--text); font: inherit;
+}
+.stile:hover { box-shadow: 0 0 0 3px var(--accent); }
+.s-ic { width: 52px; height: 52px; border-radius: 50%; background: rgba(255,255,255,.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.s-ic svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.s-txt { min-width: 0; flex: 1; }
+.s-title { font-size: 19px; font-weight: 700; }
+.s-sub { font-size: 14px; color: rgba(237,241,248,.72); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-arrow { font-size: 24px; opacity: .7; }
+.stile.c1 { background: linear-gradient(120deg, #5b2a12, #2a140a); } .stile.c1 .s-ic { color: #ffb37a; }
+.stile.c2 { background: linear-gradient(120deg, #4d4511, #221f08); } .stile.c2 .s-ic { color: #f0dc6a; }
+.stile.c3 { background: linear-gradient(120deg, #1e5129, #0d2413); } .stile.c3 .s-ic { color: #7fe7ae; }
+.stile.c4 { background: linear-gradient(120deg, #11504c, #082624); } .stile.c4 .s-ic { color: #7fe8dc; }
+.stile.c5 { background: linear-gradient(120deg, #4a2a6e, #1e1030); } .stile.c5 .s-ic { color: #d6b6ff; }
+.stile.c6 { background: linear-gradient(120deg, #1d3a6b, #0c182f); } .stile.c6 .s-ic { color: #9cc3ff; }
+.stile.c7 { background: linear-gradient(120deg, #3a2a6b, #18112e); } .stile.c7 .s-ic { color: #b8a8ff; }
+.stile.c8 { background: linear-gradient(120deg, #5e1f33, #2a0d17); } .stile.c8 .s-ic { color: #ff9fb6; }
+.q-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.q-opt { display: flex; font-size: 15px; }
+.b4k.uhd { background: rgba(10, 14, 23, .85); border-color: #f5c518; color: #f5c518; }

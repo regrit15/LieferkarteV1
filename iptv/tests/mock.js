@@ -54,7 +54,7 @@ function xmltv() {
   out.push('</tv>');
   return out.join('\n');
 }
-const vodCats = [{ category_id: '10', category_name: 'Sport Dokus' }, { category_id: '11', category_name: 'Action' }, { category_id: '12', category_name: 'FR | Films' }];
+const vodCats = [{ category_id: '10', category_name: 'Sport Dokus' }, { category_id: '11', category_name: 'Action' }, { category_id: '12', category_name: 'FR | Films' }, { category_id: '13', category_name: 'TOP MOVIES BLURAY' }];
 const vod = [
   { name: 'Das Wunder von Bern', stream_id: 1001, stream_icon: IMG + 'poster1.jpg', category_id: '10', container_extension: 'mp4', rating: '7.1', year: '2003' },
   { name: 'Testfilm Action', stream_id: 1002, stream_icon: IMG + 'poster2.jpg', category_id: '11', container_extension: 'mp4', rating: '6.0', year: '2020' },
@@ -66,6 +66,9 @@ const vod = [
   { name: 'Drama Aktuell', stream_id: 1008, stream_icon: '', category_id: '11', container_extension: 'mp4', rating: '7.9', year: '2025', added: String(Math.floor(Date.now() / 1000) - 10 * 86400) },
   { name: '4K-DE - Drama Aktuell (2025)', stream_id: 1010, stream_icon: '', category_id: '11', container_extension: 'mp4', rating: '7.9' },
   { name: 'Drama Aktuell (2025) (US)', stream_id: 1011, stream_icon: '', category_id: '11', container_extension: 'mp4', rating: '9.6' },
+  { name: 'Alter Film DVDRip (1999)', stream_id: 1012, stream_icon: '', category_id: '11', container_extension: 'mp4' },
+  { name: 'Mittlerer Film 720p (2025)', stream_id: 1013, stream_icon: '', category_id: '11', container_extension: 'mp4' },
+  { name: 'Bluray Kategorie Film', stream_id: 1014, stream_icon: '', category_id: '13', container_extension: 'mp4', year: '2025' },
   { name: 'Film MKV AC3', stream_id: 2001, stream_icon: '', category_id: '11', container_extension: 'mkv', year: '2025' },
   { name: 'Film MPEG4 Bild', stream_id: 2002, stream_icon: '', category_id: '11', container_extension: 'mp4', year: '2025' },
   { name: 'Alter Klassiker', stream_id: 1009, stream_icon: '', category_id: '11', container_extension: 'mp4', rating: '8.6', year: '1994', added: String(Math.floor(Date.now() / 1000) - 2 * 86400) },

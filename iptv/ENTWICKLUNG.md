@@ -80,8 +80,9 @@ Zugangsdaten des Nutzers nie in Dateien, Commits oder Logs schreiben.
 
 1. Design Schritt 2: Programmführer mit großem „Jetzt läuft“-Bereich oben (Vorlage des Nutzers).
 2. Design Schritt 3: eigener Player (große Knöpfe, ±10 s, Abzeichen Auflösung/Bild-/Tonformat, „Endet um“).
-3. Design Schritt 4: Einstellungsseite als Kachelübersicht; Länderfilter, Abgleich, IMDb, Wiedergabe
-   dorthin verschieben (Kopfleiste entlasten).
+3. (erledigt) Einstellungsseite `renderSettings`; Qualitätsfilter `guessQuality`/`qualityOk` (Name/Kategorie,
+   echte Auflösung aus `get_vod_info` → `state.res`). Keine Hintergrundprüfung beim Anbieter (Wunsch des Nutzers).
+   Idee offen: JustWatch-Merkliste per Einfügen importieren (keine offizielle Schnittstelle).
 4. Startbildschirm: Filmbereich niedriger oder durch laufendes Fußball-/F1-Spiel ersetzen, wenn eins läuft.
 5. Namensbereinigung mit echten Daten weiter prüfen (Beispiele sammeln, `tests/test-namen.js` erweitern).
 6. Noch nicht mit dem echten Zugang bestätigt: Länderfilter-Ergebnis nach „Nur Deutsch“ mit den neuen
